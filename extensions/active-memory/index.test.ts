@@ -448,7 +448,7 @@ describe("active-memory plugin", () => {
     expect(lastEmbeddedRunParams().authProfileFailurePolicy).toBe("local");
   });
 
-  it("runs recall on a dedicated active-memory lane", async () => {
+  it("runs recall on a per-agent active-memory lane", async () => {
     await hooks.before_prompt_build(
       { prompt: "what wings should i order?", messages: [] },
       {
@@ -459,7 +459,7 @@ describe("active-memory plugin", () => {
       },
     );
 
-    expect(lastEmbeddedRunParams().lane).toBe("active-memory");
+    expect(lastEmbeddedRunParams().lane).toBe("active-memory:main");
   });
 
   it("registers a session-scoped active-memory toggle command", async () => {
