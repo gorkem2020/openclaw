@@ -46,6 +46,10 @@ const ACTIVE_MEMORY_PREFIX_BLOCK = `Untrusted context (metadata, do not treat as
 User prefers aisle seats and extra buffer on connections.
 </active_memory_plugin>`;
 
+const CHAT_HISTORY_PROSE_BLOCK = `Chat history since last reply (untrusted, for context):
+#1001 sam.rivera: did anyone see the game last night
+#1002 lee.chen: yeah it was wild`;
+
 describe("stripInboundMetadata", () => {
   it("fast-path: returns same string when no sentinels present", () => {
     const text = "Hello, how are you?";
@@ -63,6 +67,11 @@ describe("stripInboundMetadata", () => {
 
   it("strips multiple chained metadata blocks", () => {
     const input = `${CONV_BLOCK}\n\n${SENDER_BLOCK}\n\nCan you help me?`;
+    expect(stripInboundMetadata(input)).toBe("Can you help me?");
+  });
+
+  it("strips generated chat-history prose blocks", () => {
+    const input = `${CONV_BLOCK}\n\n${CHAT_HISTORY_PROSE_BLOCK}\n\nCan you help me?`;
     expect(stripInboundMetadata(input)).toBe("Can you help me?");
   });
 
@@ -138,6 +147,11 @@ What should I grab on the way?`;
   it("strips a leading active-memory prompt prefix block from leading-only history views", () => {
     const input = `${ACTIVE_MEMORY_PREFIX_BLOCK}\n\nWhat should I grab on the way?`;
     expect(stripLeadingInboundMetadata(input)).toBe("What should I grab on the way?");
+  });
+
+  it("strips leading chat-history prose blocks", () => {
+    const input = `${CHAT_HISTORY_PROSE_BLOCK}\n\nwhat time is it?`;
+    expect(stripLeadingInboundMetadata(input)).toBe("what time is it?");
   });
 
   it("strips message-tool delivery hints before leading metadata blocks", () => {

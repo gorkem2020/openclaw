@@ -18,6 +18,19 @@ import { MESSAGE_TOOL_DELIVERY_HINTS } from "./delivery-hints.js";
 
 const LEADING_TIMESTAMP_PREFIX_RE = /^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]]*\] */;
 
+const CHAT_HISTORY_SENTINEL = "Chat history since last reply (untrusted, for context):";
+
+function skipChatWindowContextBlock(lines: string[], index: number): number {
+  let next = index + 1;
+  while (next < lines.length && lines[next]?.trim() !== "") {
+    next++;
+  }
+  while (next < lines.length && lines[next]?.trim() === "") {
+    next++;
+  }
+  return next;
+}
+
 /**
  * Sentinel strings that identify the start of an injected metadata block.
  * Must stay in sync with `buildInboundUserContextPrefix` in `inbound-meta.ts`.
@@ -28,7 +41,7 @@ const INBOUND_META_SENTINELS = [
   "Thread starter (untrusted, for context):",
   "Reply target of current user message (untrusted, for context):",
   "Forwarded message context (untrusted metadata):",
-  "Chat history since last reply (untrusted, for context):",
+  CHAT_HISTORY_SENTINEL,
 ] as const;
 
 const UNTRUSTED_CONTEXT_HEADER =
@@ -228,6 +241,10 @@ export function stripInboundMetadata(text: string): string {
     if (!inMetaBlock && isInboundMetaSentinelLine(line)) {
       const next = strippedLeadingPrefixLines[i + 1];
       if (next?.trim() !== "```json") {
+        if (line.trim() === CHAT_HISTORY_SENTINEL) {
+          i = skipChatWindowContextBlock(strippedLeadingPrefixLines, i) - 1;
+          continue;
+        }
         result.push(line);
         continue;
       }
@@ -304,6 +321,11 @@ export function stripLeadingInboundMetadata(text: string): string {
     const line = lines[index];
     if (!isInboundMetaSentinelLine(line)) {
       break;
+    }
+
+    if (line.trim() === CHAT_HISTORY_SENTINEL && lines[index + 1]?.trim() !== "```json") {
+      index = skipChatWindowContextBlock(lines, index);
+      continue;
     }
 
     index++;
