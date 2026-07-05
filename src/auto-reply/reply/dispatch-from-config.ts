@@ -204,6 +204,10 @@ function isDispatchReplyOperationAbortedError(
   return error instanceof DispatchReplyOperationAbortedError;
 }
 
+function isRecoverableTerminalSessionStatus(status: SessionEntry["status"] | undefined): boolean {
+  return status === "failed" || status === "timeout" || status === "killed";
+}
+
 function composeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
   const activeSignals: AbortSignal[] = [];
   for (const signal of signals) {
@@ -1373,7 +1377,6 @@ export async function dispatchReplyFromConfig(
       const snapshotSessionId = sessionStoreEntry.entry?.sessionId;
       if (
         activeBeforeAdmission &&
-        !activeBeforeAdmission.terminalRecovery &&
         snapshotSessionId &&
         snapshotSessionId !== activeBeforeAdmission.sessionId
       ) {
