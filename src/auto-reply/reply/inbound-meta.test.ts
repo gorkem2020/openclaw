@@ -936,6 +936,53 @@ describe("buildInboundUserContextPrefix", () => {
     expect(text).not.toContain('"message_id": "34273"');
   });
 
+  it("marks self-authored chat-window messages so the agent doesn't mistake its own reply for a stranger", () => {
+    const text = buildInboundUserContextPrefix({
+      ChatType: "private",
+      UntrustedStructuredContext: [
+        {
+          label: "Conversation context",
+          source: "telegram",
+          type: "chat_window",
+          payload: {
+            order: "chronological",
+            relation: "selected_for_current_message",
+            messages: [
+              {
+                message_id: "215",
+                sender: "operator",
+                timestamp_ms: 1_736_380_700_000,
+                body: "hey there, how's it going?",
+              },
+              {
+                message_id: "217",
+                sender: "Agent3",
+                timestamp_ms: 1_736_380_760_000,
+                body: "all good here, no weirdness",
+                is_self: true,
+              },
+              {
+                message_id: "220",
+                sender: "Agent1",
+                timestamp_ms: 1_736_380_800_000,
+                body: "unrelated message from a different agent",
+              },
+            ],
+          },
+        },
+      ],
+    } as TemplateContext);
+
+    expect(text).toContain("#215");
+    expect(text).toContain("operator: hey there, how's it going?");
+    expect(text).toContain("#217");
+    expect(text).toContain("Agent3 (you): all good here, no weirdness");
+    expect(text).toContain("#220");
+    expect(text).toContain("Agent1: unrelated message from a different agent");
+    expect(text).not.toContain("Agent1 (you)");
+    expect(text).not.toContain("operator (you)");
+  });
+
   it("canonicalizes untrusted chat-window media paths before transcript rendering", () => {
     const text = buildInboundUserContextPrefix({
       ChatType: "private",

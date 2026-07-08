@@ -238,7 +238,11 @@ function formatChatWindowMessage(
     return undefined;
   }
   const messageId = sanitizeTranscriptField(value["message_id"]);
-  const sender = sanitizeTranscriptField(value["sender"]) ?? "unknown sender";
+  const senderName = sanitizeTranscriptField(value["sender"]) ?? "unknown sender";
+  // Channels set is_self when a history message was authored by this same agent
+  // identity, so the agent can tell its own prior turn apart from another party
+  // instead of reading it back as an anonymous participant.
+  const sender = value["is_self"] === true ? `${senderName} (you)` : senderName;
   const timestamp = formatConversationTimestamp(value["timestamp_ms"], envelope);
   const replyToId = sanitizeTranscriptField(value["reply_to_id"]);
   const mediaType = sanitizeTranscriptField(value["media_type"]);
