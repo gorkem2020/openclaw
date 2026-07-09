@@ -107,6 +107,15 @@ export type RunEmbeddedAgentParams = {
   modelRun?: boolean;
   /** Explicit system prompt mode override for trusted callers. */
   promptMode?: PromptMode;
+  /**
+   * Skip before_prompt_build-family hooks (queued injections, turn prepare,
+   * heartbeat contribution, before_prompt_build, legacy start) without the
+   * other modelRun/promptMode:"none" side effects (tool/context-engine
+   * disablement). For internal sub-runs that build their own prompt and must
+   * not re-trigger plugin prompt injection, e.g. a memory-recall subagent
+   * dispatched from inside a before_prompt_build hook.
+   */
+  skipPromptBuildHooks?: boolean;
   /** Keep the message tool available even when a narrow profile would omit it. */
   forceMessageTool?: boolean;
   /** Include the heartbeat response tool for structured heartbeat outcomes. */
