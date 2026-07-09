@@ -17,6 +17,7 @@ import type {
 } from "../../../plugins/types.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../../../routing/session-key.js";
 import { joinPresentTextSegments } from "../../../shared/text/join-segments.js";
+import { truncateUtf16Safe } from "../../../utils.js";
 import { resolveProcessToolScopeKey } from "../../agent-tools.js";
 import { listActiveProcessSessionReferences } from "../../bash-process-references.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
@@ -223,6 +224,20 @@ export function resolvePromptModeForSession(sessionKey?: string): "minimal" | "f
     return "full";
   }
   return isSubagentSessionKey(sessionKey) || isCronSessionKey(sessionKey) ? "minimal" : "full";
+}
+
+/**
+ * Decides whether before_prompt_build-family hooks should run for this
+ * attempt. Raw model runs already skip them as part of disabling tools and
+ * context; skipPromptBuildHooks lets narrow internal sub-runs that keep their
+ * own tools opt out of the hook chain too, without the rest of isRawModelRun's
+ * side effects.
+ */
+export function shouldSkipPromptBuildHooks(params: {
+  isRawModelRun: boolean;
+  skipPromptBuildHooks?: boolean;
+}): boolean {
+  return params.isRawModelRun || params.skipPromptBuildHooks === true;
 }
 
 /**
