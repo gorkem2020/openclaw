@@ -2175,6 +2175,7 @@ async function runEmbeddedAgentInternal(
             streamParams: params.streamParams,
             modelRun: params.modelRun,
             promptMode: params.promptMode,
+            skipPromptBuildHooks: params.skipPromptBuildHooks,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
             silentExpected: params.silentExpected,
