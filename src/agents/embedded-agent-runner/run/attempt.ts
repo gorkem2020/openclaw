@@ -401,6 +401,8 @@ import {
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
   resolvePromptSubmissionSkipReason,
+  runWithPromptBuildHookDispatch,
+  shouldSkipPromptBuildHooks,
   shouldWarnOnOrphanedUserRepair,
   shouldInjectHeartbeatPrompt,
 } from "./attempt.prompt-helpers.js";
@@ -3939,16 +3941,18 @@ export async function runEmbeddedAttempt(
         };
         const promptBuildMessages =
           pruneProcessedHistoryImages(activeSession.messages) ?? activeSession.messages;
-        const hookResult = isRawModelRun
+        const hookResult = shouldSkipPromptBuildHooks({ isRawModelRun })
           ? undefined
-          : await resolvePromptBuildHookResult({
-              config: params.config ?? getRuntimeConfig(),
-              prompt: params.prompt,
-              messages: promptBuildMessages,
-              hookCtx,
-              hookRunner,
-              beforeAgentStartResult: params.beforeAgentStartResult,
-            });
+          : await runWithPromptBuildHookDispatch(() =>
+              resolvePromptBuildHookResult({
+                config: params.config ?? getRuntimeConfig(),
+                prompt: params.prompt,
+                messages: promptBuildMessages,
+                hookCtx,
+                hookRunner,
+                beforeAgentStartResult: params.beforeAgentStartResult,
+              }),
+            );
         const promptBeforePromptBuildHooks = effectivePrompt;
         const promptBuildPrependContext = hookResult?.prependContext;
         const promptBuildAppendContext = hookResult?.appendContext;
