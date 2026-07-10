@@ -1651,8 +1651,9 @@ async function runEmbeddedAgentInternal(
         });
       };
       let suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;
-      // The embedded agent owns JSONL persistence; this marker lets the outer retry avoid
-      // replaying the same inbound channel message after overflow compaction.
+      // The embedded agent owns JSONL persistence; this marker lets same-content retry paths
+      // (overflow compaction, before_agent_finalize revision, reasoning-only/missing-assistant/
+      // empty-response continuations) avoid replaying the same inbound user message twice.
       let lastPersistedCurrentMessageId: string | number | undefined;
       const onUserMessagePersisted: RunEmbeddedAgentParams["onUserMessagePersisted"] = (
         message,
