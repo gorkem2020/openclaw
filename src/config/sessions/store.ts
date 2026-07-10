@@ -1188,10 +1188,39 @@ export async function resetSessionEntryLifecycle(params: {
       agentId: params.agentId,
       reason: "reset",
     });
-    ensureLifecycleTranscriptHeader({
-      sessionFile: nextSessionFile,
-      sessionId: nextEntry.sessionId,
-    });
+    const reusesTranscriptPath = nextSessionFile === previousSessionFile;
+    if (reusesTranscriptPath) {
+      ensureLifecycleTranscriptHeader({
+        sessionFile: nextSessionFile,
+        sessionId: nextEntry.sessionId,
+      });
+      if (previousSessionId && previousSessionId !== nextEntry.sessionId) {
+        const { reassignSessionTrajectoryPathOwner } = await loadTrajectoryCleanupRuntime();
+        reassignSessionTrajectoryPathOwner({
+          previousSessionId,
+          previousSessionFile,
+          nextSessionId: nextEntry.sessionId,
+          nextSessionFile,
+        });
+      }
+    } else if (previousSessionId) {
+      // The previous path is genuinely abandoned (different transcript path):
+      // retire it exactly like a delete, unless another row still points at it.
+      const referencedSessionIds = new Set(
+        Object.values(store)
+          .map((entry) => entry?.sessionId)
+          .filter((sessionId): sessionId is string => Boolean(sessionId)),
+      );
+      if (!referencedSessionIds.has(previousSessionId)) {
+        const { removeRemovedSessionTrajectoryArtifacts } = await loadTrajectoryCleanupRuntime();
+        await removeRemovedSessionTrajectoryArtifacts({
+          removedSessionFiles: [[previousSessionId, previousSessionFile]],
+          referencedSessionIds,
+          storePath: params.storePath,
+          restrictToStoreDir: true,
+        });
+      }
+    }
     const result: ResetSessionEntryLifecycleResult = {
       ...mutation,
       archivedTranscripts,
