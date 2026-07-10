@@ -3733,6 +3733,7 @@ async function runEmbeddedAgentInternal(
           ) {
             reasoningOnlyRetryAttempts += 1;
             reasoningOnlyRetryInstruction = nextReasoningOnlyRetryInstruction;
+            suppressNextUserMessagePersistence = true;
             log.warn(
               `reasoning-only assistant turn detected: runId=${params.runId} sessionId=${params.sessionId} ` +
                 `provider=${activeErrorContext.provider}/${activeErrorContext.model} — retrying ${reasoningOnlyRetryAttempts}/${maxReasoningOnlyRetryAttempts} ` +
@@ -3755,6 +3756,7 @@ async function runEmbeddedAgentInternal(
             missingAssistantRetryAttempts < MAX_MISSING_ASSISTANT_RETRIES
           ) {
             missingAssistantRetryAttempts += 1;
+            suppressNextUserMessagePersistence = true;
             log.warn(
               `missing assistant terminal message detected: runId=${params.runId} sessionId=${params.sessionId} ` +
                 `provider=${activeErrorContext.provider}/${activeErrorContext.model} — retrying ${missingAssistantRetryAttempts}/${MAX_MISSING_ASSISTANT_RETRIES} with same prompt`,
@@ -3768,6 +3770,7 @@ async function runEmbeddedAgentInternal(
           ) {
             emptyResponseRetryAttempts += 1;
             emptyResponseRetryInstruction = nextEmptyResponseRetryInstruction;
+            suppressNextUserMessagePersistence = true;
             log.warn(
               `empty response detected: runId=${params.runId} sessionId=${params.sessionId} ` +
                 `provider=${activeErrorContext.provider}/${activeErrorContext.model} — retrying ${emptyResponseRetryAttempts}/${maxEmptyResponseRetryAttempts} ` +
