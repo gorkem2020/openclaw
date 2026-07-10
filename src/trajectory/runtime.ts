@@ -21,6 +21,12 @@ import {
   resolveTrajectoryPointerOpenFlags,
 } from "./paths.js";
 import type { TrajectoryEvent, TrajectoryToolDefinition } from "./types.js";
+import {
+  acquireTrajectoryWriterLease,
+  canonicalizeTrajectoryPath,
+  reapRetiredTrajectoryPathEntries,
+  withTrajectoryPathLock,
+} from "./writer-lifecycle.js";
 
 type TrajectoryRuntimeInit = {
   cfg?: OpenClawConfig;
@@ -46,7 +52,6 @@ type TrajectoryRuntimeRecorder = {
 };
 
 const writers = new Map<string, TrajectoryRuntimeWriter>();
-const windowFlushes = new Map<string, Promise<void>>();
 const MAX_TRAJECTORY_WRITERS = 100;
 const TRAJECTORY_RUNTIME_DATA_STRING_MAX_CHARS = 32_768;
 const TRAJECTORY_RUNTIME_DATA_ARRAY_MAX_ITEMS = 64;
@@ -60,6 +65,8 @@ type TrajectoryRuntimeWriterDiagnostics = Omit<QueuedFileWriterDiagnostics, "act
 type TrajectoryRuntimeWriter = Omit<QueuedFileWriter, "describeQueue"> & {
   describeQueue?: () => TrajectoryRuntimeWriterDiagnostics;
   nextSourceSeq?: () => number;
+  /** Immutable generation captured at construction; absent for test-injected writers. */
+  leaseGeneration?: number;
 };
 
 function writeTrajectoryPointerBestEffort(params: {
@@ -111,6 +118,7 @@ function writeTrajectoryPointerBestEffort(params: {
 }
 
 function trimTrajectoryWriterCache(): void {
+  reapRetiredTrajectoryPathEntries();
   while (writers.size >= MAX_TRAJECTORY_WRITERS) {
     const oldestKey = writers.keys().next().value;
     if (!oldestKey) {
@@ -348,29 +356,10 @@ async function replaceTrajectoryWindow(params: {
   });
 }
 
-async function queueTrajectoryWindowFlush(params: {
-  filePath: string;
-  maxFileBytes: number;
-  appendedLines: string[];
-}): Promise<void> {
-  const previous = windowFlushes.get(params.filePath) ?? Promise.resolve();
-  const current = previous
-    .catch(() => undefined)
-    .then(async () => {
-      await replaceTrajectoryWindow(params);
-    })
-    .finally(() => {
-      if (windowFlushes.get(params.filePath) === current) {
-        windowFlushes.delete(params.filePath);
-      }
-    });
-  windowFlushes.set(params.filePath, current);
-  await current;
-}
-
 function createTrajectoryWindowWriter(
   filePath: string,
   maxFileBytes: number,
+  leaseGeneration: number,
 ): TrajectoryRuntimeWriter {
   let pendingLines: string[] = [];
   let queuedBytes = 0;
@@ -378,9 +367,11 @@ function createTrajectoryWindowWriter(
   let activeOperation: TrajectoryRuntimeWriterDiagnostics["activeOperation"] = "idle";
   let queue: Promise<unknown> = Promise.resolve();
   let sourceSeq = readMaxTrajectorySourceSeq(filePath);
+  const canonicalPath = canonicalizeTrajectoryPath(filePath);
 
   return {
     filePath,
+    leaseGeneration,
     write: (line) => {
       const lineBytes = Buffer.byteLength(line, "utf8");
       if (lineBytes > maxFileBytes) {
@@ -403,10 +394,14 @@ function createTrajectoryWindowWriter(
       queue = queue
         .then(async () => {
           activeOperation = "file-replace";
-          await queueTrajectoryWindowFlush({
-            filePath,
-            maxFileBytes,
-            appendedLines,
+          await withTrajectoryPathLock(canonicalPath, async ({ currentGeneration, retired }) => {
+            if (retired || currentGeneration !== leaseGeneration) {
+              // Stale generation: the path was retired or reclaimed by a newer
+              // owner since this writer's lease was issued. Drop the write
+              // silently rather than resurrecting a deleted artifact (F1/F2/F5).
+              return;
+            }
+            await replaceTrajectoryWindow({ filePath, maxFileBytes, appendedLines });
           });
         })
         .catch(() => undefined)
@@ -434,13 +429,14 @@ function createTrajectoryWindowWriter(
 function getTrajectoryWindowWriter(
   filePath: string,
   maxFileBytes: number,
+  leaseGeneration: number,
 ): TrajectoryRuntimeWriter {
   const existing = writers.get(filePath);
-  if (existing) {
+  if (existing && existing.leaseGeneration === leaseGeneration) {
     return existing;
   }
   trimTrajectoryWriterCache();
-  const writer = createTrajectoryWindowWriter(filePath, maxFileBytes);
+  const writer = createTrajectoryWindowWriter(filePath, maxFileBytes, leaseGeneration);
   writers.set(filePath, writer);
   return writer;
 }
@@ -476,16 +472,22 @@ export function createTrajectoryRuntimeRecorder(
     return null;
   }
 
-  const filePath = resolveTrajectoryFilePath({
+  const candidatePath = resolveTrajectoryFilePath({
     env,
     sessionFile: params.sessionFile,
     sessionId: params.sessionId,
   });
+  const lease = acquireTrajectoryWriterLease({
+    sessionId: params.sessionId,
+    candidatePath,
+  });
+  const filePath = lease.filePath;
   const maxRuntimeFileBytes = Math.max(
     1,
     Math.floor(params.maxRuntimeFileBytes ?? TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES),
   );
-  const writer = params.writer ?? getTrajectoryWindowWriter(filePath, maxRuntimeFileBytes);
+  const writer =
+    params.writer ?? getTrajectoryWindowWriter(filePath, maxRuntimeFileBytes, lease.generation);
   writeTrajectoryPointerBestEffort({
     filePath,
     sessionFile: params.sessionFile,
