@@ -1806,7 +1806,7 @@ async function agentCommandInternal(
     let liveSwitchRetries = 0;
     let autoFallbackPrimaryProbeInterruptedByLiveSwitch = false;
     const fastModeStartedAtMs = Date.now();
-    const fallbackTrajectoryRecorder = createTrajectoryRuntimeRecorder({
+    const fallbackTrajectoryRecorder = await createTrajectoryRuntimeRecorder({
       cfg,
       runId,
       sessionId,

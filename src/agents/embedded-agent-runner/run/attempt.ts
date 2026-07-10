@@ -2150,7 +2150,7 @@ export async function runEmbeddedAttempt(
 
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     let removeToolResultContextGuard: (() => void) | undefined;
-    let trajectoryRecorder: ReturnType<typeof createTrajectoryRuntimeRecorder> | null = null;
+    let trajectoryRecorder: Awaited<ReturnType<typeof createTrajectoryRuntimeRecorder>> = null;
     let trajectoryEndRecorded = false;
     let buildAbortSettlePromise: () => Promise<void> | null = () => null;
     let cleanupYieldAborted = false;
@@ -2753,7 +2753,7 @@ export async function runEmbeddedAttempt(
         modelApi: params.model.api,
         workspaceDir: params.workspaceDir,
       });
-      trajectoryRecorder = createTrajectoryRuntimeRecorder({
+      trajectoryRecorder = await createTrajectoryRuntimeRecorder({
         cfg: params.config,
         env: process.env,
         runId: params.runId,
