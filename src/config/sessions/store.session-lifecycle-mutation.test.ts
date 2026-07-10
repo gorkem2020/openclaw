@@ -218,7 +218,7 @@ describe("session store lifecycle mutations", () => {
       { skipMaintenance: true },
     );
 
-    const recorder = createTrajectoryRuntimeRecorder({
+    const recorder = await createTrajectoryRuntimeRecorder({
       sessionId,
       sessionFile: transcriptPath,
     });
@@ -264,7 +264,7 @@ describe("session store lifecycle mutations", () => {
       { skipMaintenance: true },
     );
 
-    const recorder = createTrajectoryRuntimeRecorder({
+    const recorder = await createTrajectoryRuntimeRecorder({
       sessionId,
       sessionFile: transcriptPath,
     });
@@ -332,12 +332,12 @@ describe("session store lifecycle mutations", () => {
     );
 
     const env = { OPENCLAW_TRAJECTORY_DIR: trajectoryDir };
-    const recorderA = createTrajectoryRuntimeRecorder({
+    const recorderA = await createTrajectoryRuntimeRecorder({
       env,
       sessionId: sessionAId,
       sessionFile: transcriptPathA,
     });
-    const recorderB = createTrajectoryRuntimeRecorder({
+    const recorderB = await createTrajectoryRuntimeRecorder({
       env,
       sessionId: sessionBId,
       sessionFile: transcriptPathB,
