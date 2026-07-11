@@ -401,7 +401,6 @@ import {
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
   resolvePromptSubmissionSkipReason,
-  shouldSkipPromptBuildHooks,
   shouldWarnOnOrphanedUserRepair,
   shouldInjectHeartbeatPrompt,
 } from "./attempt.prompt-helpers.js";
@@ -3940,10 +3939,7 @@ export async function runEmbeddedAttempt(
         };
         const promptBuildMessages =
           pruneProcessedHistoryImages(activeSession.messages) ?? activeSession.messages;
-        const hookResult = shouldSkipPromptBuildHooks({
-          isRawModelRun,
-          skipPromptBuildHooks: params.skipPromptBuildHooks,
-        })
+        const hookResult = isRawModelRun
           ? undefined
           : await resolvePromptBuildHookResult({
               config: params.config ?? getRuntimeConfig(),
