@@ -2,7 +2,6 @@
  * Builds and repairs prompt inputs for embedded-agent attempts.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { prependSystemPromptAdditionAfterCacheBoundary } from "@openclaw/ai/internal/shared";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type {
   ContextEnginePromptCacheInfo,
