@@ -1188,12 +1188,12 @@ export async function resetSessionEntryLifecycle(params: {
       agentId: params.agentId,
       reason: "reset",
     });
+    ensureLifecycleTranscriptHeader({
+      sessionFile: nextSessionFile,
+      sessionId: nextEntry.sessionId,
+    });
     const reusesTranscriptPath = nextSessionFile === previousSessionFile;
     if (reusesTranscriptPath) {
-      ensureLifecycleTranscriptHeader({
-        sessionFile: nextSessionFile,
-        sessionId: nextEntry.sessionId,
-      });
       if (previousSessionId && previousSessionId !== nextEntry.sessionId) {
         const { reassignSessionTrajectoryPathOwner } = await loadTrajectoryCleanupRuntime();
         await reassignSessionTrajectoryPathOwner({
