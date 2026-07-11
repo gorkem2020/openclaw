@@ -2985,7 +2985,6 @@ async function runRecallSubagent(params: {
       disableMessageTool: true,
       allowGatewaySubagentBinding: true,
       bootstrapContextMode: "lightweight",
-      skipPromptBuildHooks: true,
       verboseLevel: "off",
       thinkLevel: params.config.thinking,
       reasoningLevel: "off",
