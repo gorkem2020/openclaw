@@ -1769,34 +1769,6 @@ function createFallbackSessionEntry(patch: Partial<SessionEntry>): SessionEntry 
   };
 }
 
-function cleanupPreviousResetTranscripts(params: {
-  agentId: string;
-  previousEntry: SessionEntry;
-  previousSessionId: string;
-  storePath: string;
-}): void {
-  const transcriptCandidates = new Set<string>();
-  const resolved = resolveSessionFilePath(
-    params.previousSessionId,
-    params.previousEntry,
-    resolveSessionFilePathOptions({
-      agentId: params.agentId,
-      storePath: params.storePath,
-    }),
-  );
-  if (resolved) {
-    transcriptCandidates.add(resolved);
-  }
-  transcriptCandidates.add(resolveSessionTranscriptPath(params.previousSessionId, params.agentId));
-  for (const candidate of transcriptCandidates) {
-    try {
-      fs.unlinkSync(candidate);
-    } catch {
-      // Best-effort cleanup.
-    }
-  }
-}
-
 async function archivePreviousSessionTranscript(params: {
   agentId: string;
   onArchiveError?: (error: unknown, sourcePath: string) => void;
