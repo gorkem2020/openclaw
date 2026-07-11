@@ -1731,7 +1731,11 @@ export const dispatchTelegramMessage = async ({
           recordOutboundMessageForPromptContext
         )({
           cfg,
-          account: { accountId: route.accountId },
+          account: {
+            accountId: route.accountId,
+            ...(telegramCfg.name !== undefined ? { name: telegramCfg.name } : {}),
+            ...(context.primaryCtx.me ? { bot: context.primaryCtx.me } : {}),
+          },
           chatId: deliveryBaseOptions.chatId,
           message: { message_id: result.delivery.messageId },
           messageId: result.delivery.messageId,

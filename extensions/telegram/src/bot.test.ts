@@ -2334,7 +2334,7 @@ describe("createTelegramBot", () => {
       });
       const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
       const baseCtx = {
-        me: { id: 999, username: "openclaw_bot" },
+        me: { id: 999, is_bot: true, first_name: "OpenClaw", username: "openclaw_bot" },
         getFile: async () => ({ download: async () => new Uint8Array() }),
       };
       const chat = { id: chatId, type: "group", title: "Ops" };
@@ -2401,7 +2401,7 @@ describe("createTelegramBot", () => {
     };
     expect(payload.ReplyChain?.map((entry) => entry.messageId)).toEqual(["102", "101"]);
     expect(payload.ReplyChain?.[1]).toMatchObject({
-      sender: "OpenClaw",
+      sender: "OpenClaw (you)",
       body: "Done, here is the image",
     });
     if (expectHydrated) {
@@ -2423,7 +2423,7 @@ describe("createTelegramBot", () => {
     );
     const messagesById = new Map(messages.map((message) => [message.message_id, message]));
     expect(messagesById.get("101")).toMatchObject({
-      sender: "OpenClaw",
+      sender: "OpenClaw (you)",
       body: "Done, here is the image",
       is_reply_target: true,
     });

@@ -1590,7 +1590,18 @@ describe("dispatchTelegramMessage draft streaming", () => {
       return { queuedFinal: true };
     });
 
-    await dispatchWithContext({ context: createContext() });
+    await dispatchWithContext({
+      context: createContext({
+        primaryCtx: {
+          me: {
+            id: 999,
+            is_bot: true,
+            first_name: "Telegram Bot Name",
+            username: "openclaw_bot",
+          },
+        } as TelegramMessageContext["primaryCtx"],
+      }),
+    });
 
     expect(answerDraftStream.update).toHaveBeenCalledWith("Final answer");
     expect(answerDraftStream.stop).toHaveBeenCalled();
@@ -1601,6 +1612,15 @@ describe("dispatchTelegramMessage draft streaming", () => {
       messageId: 2001,
     });
     expectRecordFields(mockCallArg(recordOutboundMessageForPromptContext), {
+      account: {
+        accountId: "default",
+        bot: {
+          id: 999,
+          is_bot: true,
+          first_name: "Telegram Bot Name",
+          username: "openclaw_bot",
+        },
+      },
       chatId: "123",
       messageId: 2001,
       text: "Final answer",
@@ -1620,8 +1640,18 @@ describe("dispatchTelegramMessage draft streaming", () => {
     });
 
     await dispatchWithContext({
-      context: createContext(),
+      context: createContext({
+        primaryCtx: {
+          me: {
+            id: 999,
+            is_bot: true,
+            first_name: "Telegram Bot Name",
+            username: "openclaw_bot",
+          },
+        } as TelegramMessageContext["primaryCtx"],
+      }),
       cfg: { session: { store: storePath } },
+      telegramCfg: { name: "Configured Agent" },
       telegramDeps: {
         ...telegramDepsForTest,
         recordOutboundMessageForPromptContext: recordOutboundMessageForPromptContextActual,
@@ -1656,10 +1686,19 @@ describe("dispatchTelegramMessage draft streaming", () => {
       replyTargetWindowSize: 2,
     });
 
-    expect(context.map((entry) => entry.node.messageId)).toContain("1497");
-    expect(context.map((entry) => entry.node.body)).toContain(
-      "Done already: timeoutSeconds is now 7200s.",
-    );
+    const streamedReply = context.find((entry) => entry.node.messageId === "1497");
+    expect(streamedReply?.node).toMatchObject({
+      body: "Done already: timeoutSeconds is now 7200s.",
+      sender: "Configured Agent (you)",
+      senderId: "0",
+      sourceMessage: {
+        from: {
+          id: 0,
+          is_bot: true,
+          first_name: "Configured Agent (you)",
+        },
+      },
+    });
   });
 
   it("suppresses text-only tool payloads delivered after the final answer", async () => {
