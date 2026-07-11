@@ -778,6 +778,35 @@ export async function cleanupPluginHostSessionStore(
  * optional cleanup. File storage performs these steps sequentially; database
  * backends implement this operation as one lifecycle transaction.
  */
+/**
+ * Tombstones an abandoned session's trajectory pair unless another store row
+ * still references its sessionId at swap time. Shared by
+ * persistSessionResetLifecycle (agent-runner self-heal restarts) and
+ * persistSessionRolloverLifecycle (the per-message /new, /reset, and
+ * daily/idle rollover path actually exercised by every inbound command) so
+ * both apply the same coupling resetSessionEntryLifecycle uses inline in
+ * store.ts, instead of a third divergent copy.
+ */
+async function tombstoneAbandonedSessionTrajectory(params: {
+  nowMs: number;
+  previousSessionFile: string | undefined;
+  previousSessionId: string;
+  referencedSessionIds: Set<string>;
+  storePath: string;
+}): Promise<void> {
+  if (params.referencedSessionIds.has(params.previousSessionId)) {
+    return;
+  }
+  const { removeRemovedSessionTrajectoryArtifacts } = await loadTrajectoryCleanupRuntime();
+  await removeRemovedSessionTrajectoryArtifacts({
+    removedSessionFiles: [[params.previousSessionId, params.previousSessionFile]],
+    referencedSessionIds: params.referencedSessionIds,
+    storePath: params.storePath,
+    restrictToStoreDir: true,
+    disposal: { mode: "tombstone", reason: "reset", nowMs: params.nowMs },
+  });
+}
+
 export async function persistSessionResetLifecycle(params: {
   agentId?: string;
   cleanupPreviousTranscript?: boolean;
@@ -847,21 +876,13 @@ export async function persistSessionResetLifecycle(params: {
       // A fresh reset always mints a brand-new sessionId, so nextSessionFile
       // is never the previous session's own transcript path here — this is
       // always the "genuinely abandoned" case, never a reused-path handoff.
-      // Tombstone the previous session's trajectory pair unless another
-      // store row already referenced it at swap time (same referenced-
-      // sessions guard shape resetSessionEntryLifecycle and
-      // deleteSessionEntryLifecycle use).
-      const referencedSessionIds = referencedSessionIdsAtSwap;
-      if (!referencedSessionIds.has(previousSessionId)) {
-        const { removeRemovedSessionTrajectoryArtifacts } = await loadTrajectoryCleanupRuntime();
-        await removeRemovedSessionTrajectoryArtifacts({
-          removedSessionFiles: [[previousSessionId, previousSessionFile]],
-          referencedSessionIds,
-          storePath: params.storePath,
-          restrictToStoreDir: true,
-          disposal: { mode: "tombstone", reason: "reset", nowMs },
-        });
-      }
+      await tombstoneAbandonedSessionTrajectory({
+        nowMs,
+        previousSessionFile,
+        previousSessionId,
+        referencedSessionIds: referencedSessionIdsAtSwap,
+        storePath: params.storePath,
+      });
     }
   }
 
@@ -887,6 +908,14 @@ export async function persistSessionRolloverLifecycle(params: {
   sessionKey: string;
   storePath: string;
 }): Promise<SessionLifecycleRolloverResult> {
+  // Captured inside the same locked mutator as the store swap (see
+  // persistSessionResetLifecycle's own comment for the race this avoids).
+  // This rollover — not persistSessionResetLifecycle — is the path every
+  // inbound /new, /reset, and implicit daily/idle rollover actually takes
+  // (initSessionState in auto-reply/reply/session.ts), so it needs the exact
+  // same referenced-sessions snapshot to safely tombstone the previous
+  // session's trajectory pair.
+  let referencedSessionIdsAtSwap = new Set<string>();
   await updateSessionStore(
     params.storePath,
     (store) => {
@@ -897,6 +926,11 @@ export async function persistSessionRolloverLifecycle(params: {
       if (params.retiredEntry) {
         store[params.retiredEntry.key] = params.retiredEntry.entry;
       }
+      referencedSessionIdsAtSwap = new Set(
+        Object.values(store)
+          .map((entry) => entry?.sessionId)
+          .filter((sessionId): sessionId is string => Boolean(sessionId)),
+      );
       return store[params.sessionKey] ?? params.sessionEntry;
     },
     {
@@ -906,12 +940,37 @@ export async function persistSessionRolloverLifecycle(params: {
     },
   );
 
+  // One instant for both the transcript's own reset-archive rename below and
+  // the trajectory tombstone further down, so the pair carries the exact
+  // same ".reset.<timestamp>" suffix and stays visibly coupled — matching
+  // resetSessionEntryLifecycle's own pairing in store.ts.
+  const nowMs = Date.now();
   const previousSessionTranscript = await archivePreviousSessionTranscript({
     agentId: params.agentId,
     onArchiveError: params.onArchiveError,
     previousEntry: params.previousEntry,
     storePath: params.storePath,
+    nowMs,
   });
+
+  const previousSessionId = params.previousEntry?.sessionId;
+  const previousSessionFile = params.previousEntry?.sessionFile;
+  if (
+    previousSessionId &&
+    // A rollover always mints a brand-new sessionId with a freshly resolved
+    // transcript path (see initSessionState), so this is always the
+    // "genuinely abandoned" case, never a reused-path handoff — but guard it
+    // explicitly anyway, mirroring resetSessionEntryLifecycle's own check.
+    (!previousSessionFile || previousSessionFile !== params.sessionEntry.sessionFile)
+  ) {
+    await tombstoneAbandonedSessionTrajectory({
+      nowMs,
+      previousSessionFile,
+      previousSessionId,
+      referencedSessionIds: referencedSessionIdsAtSwap,
+      storePath: params.storePath,
+    });
+  }
 
   return {
     previousSessionTranscript,
