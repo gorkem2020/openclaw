@@ -269,6 +269,47 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
     ]);
     expect(trajectoryCleanupReferencedIds).toEqual(new Set(["shared-session", "active-session"]));
   });
+
+  it("folds an external trajectory tombstone directory into the retention sweep's targets", async () => {
+    // A configured OPENCLAW_TRAJECTORY_DIR tombstones outside the sessions
+    // dir archiveRemovedSessionTranscripts already reports — the sweep must
+    // still reach it, or those tombstones never age out.
+    const now = Date.now();
+    const store = makeStore([
+      [
+        "stale",
+        { sessionId: "stale-session", sessionFile: "stale.jsonl", updatedAt: now - 30 * DAY_MS },
+      ],
+    ]);
+    let sweptDirectories: string[] | undefined;
+
+    await applyFileBackedSessionStoreMaintenance({
+      storePath: "/tmp/openclaw-sessions/sessions.json",
+      store,
+      maintenanceConfig: {
+        mode: "enforce",
+        pruneAfterMs: 7 * DAY_MS,
+        maxEntries: 500,
+        resetArchiveRetentionMs: null,
+        maxDiskBytes: null,
+        highWaterBytes: null,
+      },
+      log: { warn: () => {}, info: () => {} },
+      artifacts: {
+        archiveRemovedSessionTranscripts: async () => new Set(["/tmp/openclaw-sessions"]),
+        removeRemovedSessionTrajectoryArtifacts: async () =>
+          new Set(["/tmp/openclaw-sessions", "/mnt/external-trajectory-dir"]),
+        cleanupArchivedSessionTranscripts: async (params) => {
+          sweptDirectories = params.directories;
+        },
+      },
+    });
+
+    expect(sweptDirectories).toEqual(
+      expect.arrayContaining(["/tmp/openclaw-sessions", "/mnt/external-trajectory-dir"]),
+    );
+    expect(sweptDirectories).toHaveLength(2);
+  });
 });
 
 describe("capEntryCount", () => {
