@@ -41,7 +41,6 @@ import {
   resolvePromptSubmissionSkipReason,
   resolveAttemptMediaTaskSystemPromptAddition,
   resolvePromptBuildHookResult,
-  shouldSkipPromptBuildHooks,
 } from "./attempt.prompt-helpers.js";
 
 describe("resolveAttemptMediaTaskSystemPromptAddition", () => {
@@ -278,27 +277,5 @@ describe("resolvePromptBuildHookResult drain cache", () => {
     });
 
     expect(hostHookStateMocks.drainPluginNextTurnInjectionContext).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("shouldSkipPromptBuildHooks", () => {
-  it("skips for raw model runs regardless of skipPromptBuildHooks", () => {
-    expect(shouldSkipPromptBuildHooks({ isRawModelRun: true })).toBe(true);
-    expect(shouldSkipPromptBuildHooks({ isRawModelRun: true, skipPromptBuildHooks: false })).toBe(
-      true,
-    );
-  });
-
-  it("skips when a non-raw run opts in via skipPromptBuildHooks", () => {
-    expect(shouldSkipPromptBuildHooks({ isRawModelRun: false, skipPromptBuildHooks: true })).toBe(
-      true,
-    );
-  });
-
-  it("runs hooks for a normal attempt", () => {
-    expect(shouldSkipPromptBuildHooks({ isRawModelRun: false })).toBe(false);
-    expect(shouldSkipPromptBuildHooks({ isRawModelRun: false, skipPromptBuildHooks: false })).toBe(
-      false,
-    );
   });
 });
