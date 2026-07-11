@@ -1621,6 +1621,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
           username: "openclaw_bot",
         },
       },
+      botUserId: 999,
       chatId: "123",
       messageId: 2001,
       text: "Final answer",
@@ -1690,10 +1691,10 @@ describe("dispatchTelegramMessage draft streaming", () => {
     expect(streamedReply?.node).toMatchObject({
       body: "Done already: timeoutSeconds is now 7200s.",
       sender: "Configured Agent (you)",
-      senderId: "0",
+      senderId: "999",
       sourceMessage: {
         from: {
-          id: 0,
+          id: 999,
           is_bot: true,
           first_name: "Configured Agent (you)",
         },

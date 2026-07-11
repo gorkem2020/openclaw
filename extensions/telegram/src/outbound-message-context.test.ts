@@ -190,6 +190,29 @@ describe("recordOutboundMessageForPromptContext", () => {
     });
   });
 
+  it("uses botUserId instead of the id=0 sentinel for a finalized streamed message without from", async () => {
+    const initial = await recordAndRead({
+      account: { accountId: "default", name: "StreamBot" },
+      chatId: 42,
+      message: { message_id: 1499 },
+      messageId: 1499,
+      botUserId: 999,
+      text: "Final streamed reply",
+    });
+
+    expect(initial).toMatchObject({
+      sender: "StreamBot (you)",
+      senderId: "999",
+      sourceMessage: {
+        from: {
+          id: 999,
+          is_bot: true,
+          first_name: "StreamBot (you)",
+        },
+      },
+    });
+  });
+
   it("ignores Telegram's fake sender identity across channel post echoes", async () => {
     const initial = await recordAndRead({
       account: { accountId: "default" },

@@ -1736,6 +1736,9 @@ export const dispatchTelegramMessage = async ({
             ...(telegramCfg.name !== undefined ? { name: telegramCfg.name } : {}),
             ...(context.primaryCtx.me ? { bot: context.primaryCtx.me } : {}),
           },
+          ...(context.primaryCtx.me?.id !== undefined
+            ? { botUserId: context.primaryCtx.me.id }
+            : {}),
           chatId: deliveryBaseOptions.chatId,
           message: { message_id: result.delivery.messageId },
           messageId: result.delivery.messageId,

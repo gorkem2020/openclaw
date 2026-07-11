@@ -41,6 +41,7 @@ function buildOutboundCacheMessage(params: {
   chatId: string | number;
   message: TelegramOutboundPromptContextMessage;
   messageId: number;
+  botUserId?: number;
   text?: string;
   messageThreadId?: number;
 }): TelegramOutboundPromptContextMessage {
@@ -66,9 +67,13 @@ function buildOutboundCacheMessage(params: {
       ...(chat.username ? { username: chat.username } : {}),
     },
     // Every message entering here came from this bot. Keep only Telegram's real
-    // id/username; sender_chat uses a synthetic compatibility user.
+    // id/username; sender_chat uses a synthetic compatibility user. Streamed
+    // finalizes never round-trip a `from` (see recordOutboundMessageForPromptContext
+    // callers in bot-message-dispatch.ts) — botUserId (the bot's own already-known
+    // id, not derived from the send response) lets those still match resolvePromptSender's
+    // authenticated-self check instead of only its senderId==="0" legacy fallback.
     from: {
-      id: stableSender?.id ?? 0,
+      id: params.message.sender_chat ? 0 : (stableSender?.id ?? params.botUserId ?? 0),
       is_bot: true,
       first_name: selfSenderName,
       ...(stableSender?.username ? { username: stableSender.username } : {}),
@@ -84,6 +89,7 @@ export async function recordOutboundMessageForPromptContext(params: {
   chatId: string | number;
   message: TelegramOutboundPromptContextMessage;
   messageId: number;
+  botUserId?: number;
   text?: string;
   messageThreadId?: number;
 }): Promise<void> {
