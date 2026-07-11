@@ -4,6 +4,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { onSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
+import {
+  resolveTrajectoryFilePath,
+  resolveTrajectoryPointerFilePath,
+} from "../../trajectory/paths.js";
+import { createTrajectoryRuntimeRecorder } from "../../trajectory/runtime.js";
+import {
+  acquireTrajectoryWriterLease,
+  clearTrajectoryWriterLifecycleRegistryForTest,
+} from "../../trajectory/writer-lifecycle.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import {
   applyRestartRecoveryLifecycle,
@@ -713,7 +722,93 @@ describe("session accessor file-backed seam", () => {
     expect(fs.existsSync(result.previousSessionTranscript.sessionFile ?? "")).toBe(true);
   });
 
-  it("loads and appends transcript events through a session scope", async () => {
+  it("tombstones the previous session's trajectory pair during a runner-driven reset, and blocks a late straggler from resurrecting it", async () => {
+    // Reproduces the fleet divergence: the runner-driven reset (typed
+    // in-conversation /reset, agent-runner-session-reset.ts ->
+    // persistSessionResetLifecycle) used to persist its own store swap and
+    // transcript archive without ever routing through
+    // resetSessionEntryLifecycle in store.ts, so it never touched the
+    // previous session's trajectory pair at all — unlike the gateway RPC
+    // reset path (webchat "New chat" -> session-reset-service.ts ->
+    // resetSessionEntryLifecycle), which correctly tombstones it.
+    const now = Date.now();
+    const sessionKey = "agent:main:main";
+    const previousTranscript = path.join(tempDir, "previous-trajectory-session.jsonl");
+    const nextTranscript = path.join(tempDir, "next-trajectory-session.jsonl");
+    const previousEntry: SessionEntry = {
+      sessionFile: previousTranscript,
+      sessionId: "previous-trajectory-session",
+      updatedAt: now,
+    };
+    const nextEntry: SessionEntry = {
+      sessionFile: nextTranscript,
+      sessionId: "next-trajectory-session",
+      updatedAt: now + 1,
+    };
+    fs.writeFileSync(
+      previousTranscript,
+      `${JSON.stringify({ type: "session", id: "previous-trajectory-session" })}\n`,
+      "utf-8",
+    );
+    await upsertSessionEntry({ sessionKey, storePath }, previousEntry);
+
+    const runtimeFile = resolveTrajectoryFilePath({
+      sessionFile: previousTranscript,
+      sessionId: previousEntry.sessionId,
+    });
+    const pointerPath = resolveTrajectoryPointerFilePath(previousTranscript);
+    const recorderResult = createTrajectoryRuntimeRecorder({
+      sessionId: previousEntry.sessionId,
+      sessionFile: previousTranscript,
+    });
+    const recorder = await recorderResult;
+    if (!recorder) {
+      throw new Error("expected trajectory runtime recorder");
+    }
+    recorder.recordEvent("prompt.submitted", { marker: "before-reset" });
+    await recorder.flush();
+    expect(fs.existsSync(runtimeFile)).toBe(true);
+    expect(fs.existsSync(pointerPath)).toBe(true);
+
+    try {
+      await persistSessionResetLifecycle({
+        agentId: "main",
+        cleanupPreviousTranscript: true,
+        nextEntry,
+        nextSessionFile: nextTranscript,
+        previousEntry,
+        previousSessionId: previousEntry.sessionId,
+        sessionKey,
+        storePath,
+      });
+
+      expect(fs.existsSync(runtimeFile)).toBe(false);
+      expect(fs.existsSync(pointerPath)).toBe(false);
+      const runtimeTombstones = fs
+        .readdirSync(tempDir)
+        .filter((file) => file.startsWith(`${path.basename(runtimeFile)}.reset.`));
+      const pointerTombstones = fs
+        .readdirSync(tempDir)
+        .filter((file) => file.startsWith(`${path.basename(pointerPath)}.reset.`));
+      expect(runtimeTombstones).toHaveLength(1);
+      expect(pointerTombstones).toHaveLength(1);
+
+      // A late straggler write for the reset session (e.g. an async
+      // post-turn hook, such as a memory-reflection cascade, still finishing
+      // against the old identity) must not resurrect the tombstoned
+      // canonical path by freshly re-acquiring under the same session id.
+      const lateLease = await acquireTrajectoryWriterLease({
+        sessionId: previousEntry.sessionId,
+        candidatePath: runtimeFile,
+      });
+      expect(lateLease.filePath).not.toBe(runtimeFile);
+      expect(fs.existsSync(runtimeFile)).toBe(false);
+    } finally {
+      clearTrajectoryWriterLifecycleRegistryForTest();
+    }
+  });
+
+  it("appends transcript events through a session scope", async () => {
     const scope = {
       sessionFile: transcriptPath,
       sessionId: "session-1",
