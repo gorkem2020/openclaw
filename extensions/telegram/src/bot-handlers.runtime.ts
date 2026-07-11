@@ -1131,30 +1131,20 @@ export const registerTelegramHandlers = ({
     node: TelegramCachedMessageNode,
     flags?: { replyTarget?: boolean },
     media?: TelegramMediaRef,
-    self?: { id?: number; name?: string },
-  ) => {
-    // The outbound send path (outbound-message-context.ts) records the bot's own
-    // sent messages into this same cache for reply-chain/history continuity, and
-    // that recording carries the bot's real Telegram identity in `from` — without
-    // this check a prior turn's sender is indistinguishable from another party
-    // (the agent reads its own past reply back as an anonymous stranger).
-    const isSelf = self?.id != null && node.sourceMessage.from?.id === self.id;
-    return {
-      message_id: node.messageId,
-      thread_id: node.threadId,
-      sender: isSelf && self?.name ? self.name : node.sender,
-      sender_id: node.senderId,
-      sender_username: node.senderUsername,
-      timestamp_ms: node.timestamp,
-      body: node.body,
-      media_type: media?.contentType ?? node.mediaType,
-      media_path: media?.path,
-      media_ref: media?.path ? undefined : node.mediaRef,
-      reply_to_id: node.replyToId,
-      is_reply_target: flags?.replyTarget === true ? true : undefined,
-      is_self: isSelf ? true : undefined,
-    };
-  };
+  ) => ({
+    message_id: node.messageId,
+    thread_id: node.threadId,
+    sender: node.sender,
+    sender_id: node.senderId,
+    sender_username: node.senderUsername,
+    timestamp_ms: node.timestamp,
+    body: node.body,
+    media_type: media?.contentType ?? node.mediaType,
+    media_path: media?.path,
+    media_ref: media?.path ? undefined : node.mediaRef,
+    reply_to_id: node.replyToId,
+    is_reply_target: flags?.replyTarget === true ? true : undefined,
+  });
 
   const buildMentionOnlyGroupHistoryPredicate = (params: {
     ctx: TelegramContext;
@@ -1249,32 +1239,26 @@ export const registerTelegramHandlers = ({
         ? { includeNode: buildMentionOnlyGroupHistoryPredicate({ ctx, msg, threadId }) }
         : {}),
     });
-    if (conversationContext.length === 0) {
-      return [];
-    }
-    const self = {
-      id: ctx.me?.id,
-      name: resolveTelegramAccount({ cfg: telegramDeps.getRuntimeConfig(), accountId }).name,
-    };
-    return [
-      {
-        label: "Conversation context",
-        source: "telegram",
-        type: "chat_window",
-        payload: {
-          order: "chronological",
-          relation: "selected_for_current_message",
-          messages: conversationContext.map((entry) =>
-            toPromptContextMessage(
-              entry.node,
-              { replyTarget: entry.isReplyTarget },
-              entry.node.messageId ? mediaByMessageId?.get(entry.node.messageId) : undefined,
-              self,
-            ),
-          ),
-        },
-      },
-    ];
+    return conversationContext.length > 0
+      ? [
+          {
+            label: "Conversation context",
+            source: "telegram",
+            type: "chat_window",
+            payload: {
+              order: "chronological",
+              relation: "selected_for_current_message",
+              messages: conversationContext.map((entry) =>
+                toPromptContextMessage(
+                  entry.node,
+                  { replyTarget: entry.isReplyTarget },
+                  entry.node.messageId ? mediaByMessageId?.get(entry.node.messageId) : undefined,
+                ),
+              ),
+            },
+          },
+        ]
+      : [];
   };
 
   const resolveReplyMediaForChain = async (
