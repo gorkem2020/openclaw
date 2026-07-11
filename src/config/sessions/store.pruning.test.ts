@@ -247,6 +247,7 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
         },
         removeRemovedSessionTrajectoryArtifacts: async (params) => {
           trajectoryCleanupReferencedIds = new Set(params.referencedSessionIds);
+          return new Set<string>();
         },
         cleanupArchivedSessionTranscripts: async () => {},
       },
