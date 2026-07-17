@@ -2003,6 +2003,7 @@ export async function runEmbeddedAttempt(
     );
     const attemptSystemPrompt = buildAttemptSystemPrompt({
       isRawModelRun,
+      systemPromptOverride: params.systemPromptOverride,
       transformProviderSystemPrompt: (transformParams) =>
         transformProviderSystemPrompt({
           ...transformParams,

@@ -147,6 +147,40 @@ describe("buildAttemptSystemPrompt", () => {
     expect(result.systemPrompt).toContain("RUN_MODE_TASK_77950");
   });
 
+  it("replaces the built prompt when a trusted caller supplies systemPromptOverride", () => {
+    // Trusted internal sub-runs (e.g. plugin recall workers) own their full
+    // identity: the default persona and tooling sections must not leak in,
+    // while provider text transforms still apply to the override.
+    const result = buildAttemptSystemPrompt({
+      isRawModelRun: false,
+      systemPromptOverride: "You are a memory search agent. OVERRIDE_MARKER",
+      transformProviderSystemPrompt: ({ context }) => `${context.systemPrompt}\nTRANSFORM_MARKER`,
+      embeddedSystemPrompt: {
+        workspaceDir: "/tmp/openclaw",
+        reasoningTagHint: false,
+        runtimeInfo: {
+          host: "test-host",
+          os: "Darwin",
+          arch: "arm64",
+          node: "v22.0.0",
+          model: "openai/gpt-5.5",
+        },
+        tools: [],
+        modelAliasLines: [],
+        userTimezone: "UTC",
+        contextFiles: [{ path: "/tmp/openclaw/SOUL.md", content: "SOUL_CONTEXT_MARKER" }],
+      },
+      providerTransform: baseProviderTransform,
+    });
+
+    expect(result.baseSystemPrompt).toBe("You are a memory search agent. OVERRIDE_MARKER");
+    expect(result.systemPrompt).toBe(
+      "You are a memory search agent. OVERRIDE_MARKER\nTRANSFORM_MARKER",
+    );
+    expect(result.systemPrompt).not.toContain("You are a personal assistant");
+    expect(result.systemPrompt).not.toContain("SOUL_CONTEXT_MARKER");
+  });
+
   it("omits system prompts for raw model probes", () => {
     // Raw model probes still build a base prompt for diagnostics, but the final
     // provider prompt must be empty.

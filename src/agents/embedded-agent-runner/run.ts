@@ -2171,6 +2171,7 @@ async function runEmbeddedAgentInternal(
               params.deferTerminalLifecycle ?? params.deferTerminalLifecycleEnd,
             onExecutionPhase: params.onExecutionPhase,
             extraSystemPrompt: params.extraSystemPrompt,
+            systemPromptOverride: params.systemPromptOverride,
             sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
             inputProvenance: params.inputProvenance,
             streamParams: params.streamParams,

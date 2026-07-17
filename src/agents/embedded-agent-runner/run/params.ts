@@ -241,6 +241,13 @@ export type RunEmbeddedAgentParams = {
   lane?: string;
   enqueue?: CommandQueueEnqueueFn;
   extraSystemPrompt?: string;
+  /**
+   * Full replacement for the built embedded system prompt. For trusted
+   * internal sub-runs (e.g. plugin recall workers) that own their identity;
+   * the default persona/tooling prompt is skipped entirely. Tools remain
+   * schema-wired and unaffected. Provider text transforms still apply.
+   */
+  systemPromptOverride?: string;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   silentReplyPromptMode?: SilentReplyPromptMode;
   internalEvents?: AgentInternalEvent[];

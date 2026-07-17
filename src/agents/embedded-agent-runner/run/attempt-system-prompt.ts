@@ -15,6 +15,13 @@ type ProviderSystemPromptTransform = (params: {
 
 type BuildAttemptSystemPromptParams = {
   isRawModelRun: boolean;
+  /**
+   * Full replacement for the built embedded system prompt. Trusted internal
+   * sub-runs (e.g. plugin recall workers) own their identity end to end; the
+   * default persona/tooling prompt must not leak in. Tools stay schema-wired,
+   * so replacing the prompt text does not affect tool availability.
+   */
+  systemPromptOverride?: string;
   embeddedSystemPrompt: EmbeddedSystemPromptParams;
   transformProviderSystemPrompt: ProviderSystemPromptTransform;
   providerTransform: {
@@ -39,7 +46,8 @@ type AttemptSystemPrompt = {
 export function buildAttemptSystemPrompt(
   params: BuildAttemptSystemPromptParams,
 ): AttemptSystemPrompt {
-  const baseSystemPrompt = buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
+  const baseSystemPrompt =
+    params.systemPromptOverride ?? buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
   const systemPrompt = params.isRawModelRun
     ? ""
     : params.transformProviderSystemPrompt({
