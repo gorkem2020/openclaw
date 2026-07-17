@@ -1,7 +1,7 @@
 // Integration coverage: systemPromptOverride must reach the system prompt
 // actually installed on the session (as close to the outbound model call as
 // this harness gets) with the override text first, not dropped or replaced.
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearMemoryPluginState,
   registerMemoryPromptSection,
@@ -127,6 +127,47 @@ describe("systemPromptOverride reaches the installed session system prompt", () 
     expect(
       seen.systemPrompt?.startsWith("You are a memory search agent. OVERRIDE_ON_THE_WIRE_MARKER"),
     ).toBe(true);
+  });
+
+  it("appends a context-engine systemPromptAddition below the override instead of prepending above it", async () => {
+    // The engine's memory-guidance addition (e.g. a registered capability's
+    // "## Memory Recall" section) is generic main-agent material. On an
+    // override-carrying run the override IS the caller's identity and must
+    // stay first; the addition belongs at the bottom, like the memory
+    // section composeOverrideSystemPrompt appends. Live-caught on the
+    // active-memory recall sub-run, whose system prompt opened with the
+    // capability section instead of its own identity.
+    const seen: { systemPrompt?: string } = {};
+    const engine = createContextEngineBootstrapAndAssemble();
+    engine.assemble = vi.fn(async ({ messages }: { messages: unknown[] }) => ({
+      messages,
+      estimatedTokens: 1,
+      systemPromptAddition: "## Memory Recall\nQuery the store before answering.",
+    })) as typeof engine.assemble;
+
+    await createContextEngineAttemptRunner({
+      contextEngine: engine,
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        systemPromptOverride: "You are a memory search agent. OVERRIDE_ON_THE_WIRE_MARKER",
+      },
+      sessionPrompt: async (session) => {
+        seen.systemPrompt = session.agent.state.systemPrompt;
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "done", timestamp: 2 },
+        ];
+      },
+    });
+
+    const prompt = seen.systemPrompt ?? "";
+    expect(
+      prompt.startsWith("You are a memory search agent. OVERRIDE_ON_THE_WIRE_MARKER"),
+      `override must stay first, got: ${prompt.slice(0, 80)}`,
+    ).toBe(true);
+    const additionIndex = prompt.indexOf("## Memory Recall");
+    expect(additionIndex).toBeGreaterThan(0);
   });
 
   it("keeps the override installed on raw model runs instead of blanking it at the raw-run session reset", async () => {

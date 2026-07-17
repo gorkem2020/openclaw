@@ -3353,15 +3353,33 @@ export async function runEmbeddedAttempt(
                 preassemblyContextEngineMessagesForPrecheck;
             }
             if (assembled.systemPromptAddition) {
-              setActiveSessionSystemPrompt(
-                prependSystemPromptAddition({
-                  systemPrompt: systemPromptText,
-                  systemPromptAddition: assembled.systemPromptAddition,
-                }),
-              );
-              log.debug(
-                `context engine: prepended system prompt addition (${assembled.systemPromptAddition.length} chars)`,
-              );
+              if (params.systemPromptOverride !== undefined) {
+                // An override-carrying run's system prompt IS the trusted
+                // caller's identity and must open the prompt; the engine's
+                // generic guidance (e.g. a registered memory capability's
+                // recall section) goes to the bottom, mirroring where
+                // composeOverrideSystemPrompt appends the memory section.
+                // Live-caught: the active-memory recall sub-run's prompt
+                // opened with "## Memory Recall" instead of its identity.
+                setActiveSessionSystemPrompt(
+                  systemPromptText.trim().length > 0
+                    ? `${systemPromptText.trimEnd()}\n\n${assembled.systemPromptAddition}`
+                    : assembled.systemPromptAddition,
+                );
+                log.debug(
+                  `context engine: appended system prompt addition below the override (${assembled.systemPromptAddition.length} chars)`,
+                );
+              } else {
+                setActiveSessionSystemPrompt(
+                  prependSystemPromptAddition({
+                    systemPrompt: systemPromptText,
+                    systemPromptAddition: assembled.systemPromptAddition,
+                  }),
+                );
+                log.debug(
+                  `context engine: prepended system prompt addition (${assembled.systemPromptAddition.length} chars)`,
+                );
+              }
             }
           } catch (assembleErr) {
             log.warn(
