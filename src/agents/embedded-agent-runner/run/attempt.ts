@@ -2549,10 +2549,15 @@ export async function runEmbeddedAttempt(
       if (isRawModelRun) {
         // Raw model probes should measure exactly the requested prompt against
         // the selected provider/model. Reset clears restored transcript state
-        // and queues; the empty system prompt prevents the runtime from rebuilding the
-        // normal OpenClaw agent/tool prompt when `session.prompt()` starts.
+        // and queues; re-applying the built value prevents the runtime from
+        // rebuilding the normal OpenClaw agent/tool prompt when
+        // `session.prompt()` starts. For raw runs that value is "" unless a
+        // trusted caller supplied systemPromptOverride — that override is the
+        // caller's own prompt and must survive the reset, not be blanked.
         activeSession.agent.reset();
-        setActiveSessionSystemPrompt("");
+        setActiveSessionSystemPrompt(
+          params.systemPromptOverride !== undefined ? systemPromptText : "",
+        );
       }
       // Single source for the per-message timestamp prefix (issue #3658):
       // normal embedded runs stamp every user message from its own timestamp.
@@ -3183,8 +3188,13 @@ export async function runEmbeddedAttempt(
 
       try {
         if (isRawModelRun) {
+          // Same override carve-out as the raw-run reset above: a supplied
+          // systemPromptOverride is the caller's own prompt and rides the raw
+          // run; only override-less raw probes blank the system prompt.
           activeSession.agent.reset();
-          setActiveSessionSystemPrompt("");
+          setActiveSessionSystemPrompt(
+            params.systemPromptOverride !== undefined ? systemPromptText : "",
+          );
           cacheTrace?.recordStage("session:raw-model-run", {
             messages: activeSession.messages,
             system: systemPromptText,

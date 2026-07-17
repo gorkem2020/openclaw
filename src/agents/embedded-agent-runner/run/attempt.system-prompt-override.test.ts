@@ -128,4 +128,35 @@ describe("systemPromptOverride reaches the installed session system prompt", () 
       seen.systemPrompt?.startsWith("You are a memory search agent. OVERRIDE_ON_THE_WIRE_MARKER"),
     ).toBe(true);
   });
+
+  it("keeps the override installed on raw model runs instead of blanking it at the raw-run session reset", async () => {
+    // Raw runs (modelRun: true) reset the session and blank its system
+    // prompt so the normal agent/tool prompt cannot leak into a bare model
+    // probe. An explicit systemPromptOverride is the caller's own prompt and
+    // must survive that reset — blanking it is exactly the regression that
+    // sent the reflection distiller an empty prompt on the wire.
+    const seen: { systemPrompt?: string } = {};
+
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        systemPromptOverride: "You are a memory search agent. OVERRIDE_ON_THE_WIRE_MARKER",
+        modelRun: true,
+      },
+      sessionPrompt: async (session) => {
+        seen.systemPrompt = session.agent.state.systemPrompt;
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "done", timestamp: 2 },
+        ];
+      },
+    });
+
+    expect(seen.systemPrompt).toBeDefined();
+    expect(
+      seen.systemPrompt?.startsWith("You are a memory search agent. OVERRIDE_ON_THE_WIRE_MARKER"),
+    ).toBe(true);
+  });
 });
