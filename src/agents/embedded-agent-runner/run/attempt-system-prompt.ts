@@ -3,6 +3,7 @@
  */
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { ProviderTransformSystemPromptContext } from "../../../plugins/types.js";
+import { buildAgentMemorySystemPromptSection } from "../../system-prompt.js";
 import { buildEmbeddedSystemPrompt } from "../system-prompt.js";
 
 type EmbeddedSystemPromptParams = Parameters<typeof buildEmbeddedSystemPrompt>[0];
@@ -16,10 +17,13 @@ type ProviderSystemPromptTransform = (params: {
 type BuildAttemptSystemPromptParams = {
   isRawModelRun: boolean;
   /**
-   * Full replacement for the built embedded system prompt. Trusted internal
-   * sub-runs (e.g. plugin recall workers) own their identity end to end; the
-   * default persona/tooling prompt must not leak in. Tools stay schema-wired,
-   * so replacing the prompt text does not affect tool availability.
+   * Replacement for the built embedded system prompt's persona/tooling text.
+   * Trusted internal sub-runs (e.g. plugin recall workers) own their identity
+   * end to end; the default persona/tooling prompt must not leak in. Tools
+   * stay schema-wired, so replacing the prompt text does not affect tool
+   * availability. Any plugin-contributed memory section still gets appended
+   * after the override text (see composeOverrideSystemPrompt) rather than
+   * dropped or placed above it.
    */
   systemPromptOverride?: string;
   embeddedSystemPrompt: EmbeddedSystemPromptParams;
@@ -39,6 +43,26 @@ type AttemptSystemPrompt = {
 };
 
 /**
+ * Composes a systemPromptOverride with any plugin-contributed memory section.
+ * The override text stays first so the trusted caller's identity is not
+ * diluted by unrelated guidance; the memory section (if any) is appended at
+ * the bottom rather than dropped.
+ */
+function composeOverrideSystemPrompt(params: {
+  override: string;
+  embeddedSystemPrompt: EmbeddedSystemPromptParams;
+}): string {
+  const memorySection = buildAgentMemorySystemPromptSection({
+    toolNames: params.embeddedSystemPrompt.tools.map((tool) => tool.name),
+    capabilityToolNames: params.embeddedSystemPrompt.capabilityToolNames,
+    promptMode: params.embeddedSystemPrompt.promptMode,
+    includeMemorySection: params.embeddedSystemPrompt.includeMemorySection,
+    memoryCitationsMode: params.embeddedSystemPrompt.memoryCitationsMode,
+  });
+  return memorySection ? `${params.override}\n\n${memorySection}` : params.override;
+}
+
+/**
  * Builds the embedded system prompt and applies provider-specific transforms
  * unless this is a raw model run. Raw runs still keep `baseSystemPrompt` for
  * diagnostics/cache boundaries, but submit an empty provider prompt.
@@ -47,7 +71,12 @@ export function buildAttemptSystemPrompt(
   params: BuildAttemptSystemPromptParams,
 ): AttemptSystemPrompt {
   const baseSystemPrompt =
-    params.systemPromptOverride ?? buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
+    params.systemPromptOverride !== undefined
+      ? composeOverrideSystemPrompt({
+          override: params.systemPromptOverride,
+          embeddedSystemPrompt: params.embeddedSystemPrompt,
+        })
+      : buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
   const systemPrompt = params.isRawModelRun
     ? ""
     : params.transformProviderSystemPrompt({

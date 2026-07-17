@@ -298,6 +298,32 @@ function buildMemorySection(params: {
   });
 }
 
+/**
+ * Standalone memory-section text for callers that assemble a system prompt
+ * outside buildAgentSystemPrompt (e.g. appending plugin-contributed memory
+ * guidance after a systemPromptOverride).
+ */
+export function buildAgentMemorySystemPromptSection(params: {
+  toolNames?: string[];
+  capabilityToolNames?: string[];
+  promptMode?: PromptMode;
+  includeMemorySection?: boolean;
+  memoryCitationsMode?: MemoryCitationsMode;
+}): string {
+  const promptMode = params.promptMode ?? "full";
+  const isMinimal = promptMode === "minimal" || promptMode === "none";
+  const availableTools = new Set([
+    ...normalizeStringEntriesLower(params.toolNames),
+    ...normalizeStringEntriesLower(params.capabilityToolNames),
+  ]);
+  return buildMemorySection({
+    isMinimal,
+    includeMemorySection: params.includeMemorySection,
+    availableTools,
+    citationsMode: params.memoryCitationsMode,
+  }).join("\n");
+}
+
 export function buildAgentBootstrapSystemContext(params: {
   bootstrapMode?: BootstrapMode;
   hasBootstrapFileInProjectContext?: boolean;

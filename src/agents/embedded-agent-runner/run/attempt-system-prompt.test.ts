@@ -1,10 +1,18 @@
 // Coverage for assembling provider-transformed embedded attempt system prompts.
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  clearMemoryPluginState,
+  registerMemoryPromptSection,
+} from "../../../plugins/memory-state.js";
 
 let buildAttemptSystemPrompt: typeof import("./attempt-system-prompt.js").buildAttemptSystemPrompt;
 
 beforeAll(async () => {
   ({ buildAttemptSystemPrompt } = await import("./attempt-system-prompt.js"));
+});
+
+afterEach(() => {
+  clearMemoryPluginState();
 });
 
 const baseProviderTransform = {
@@ -179,6 +187,73 @@ describe("buildAttemptSystemPrompt", () => {
     );
     expect(result.systemPrompt).not.toContain("You are a personal assistant");
     expect(result.systemPrompt).not.toContain("SOUL_CONTEXT_MARKER");
+  });
+
+  it("appends a plugin-contributed memory section after systemPromptOverride, not before it", () => {
+    // Regression: a naive override implementation either drops plugin memory
+    // guidance entirely or lets it leak in ABOVE the override text. The
+    // override must stay first since it carries the sub-run's identity; the
+    // memory section is supplementary and belongs at the bottom.
+    registerMemoryPromptSection(() => ["## Memory Recall", "Use memory carefully."]);
+
+    const result = buildAttemptSystemPrompt({
+      isRawModelRun: false,
+      systemPromptOverride: "You are a memory search agent. OVERRIDE_MARKER",
+      transformProviderSystemPrompt,
+      embeddedSystemPrompt: {
+        workspaceDir: "/tmp/openclaw",
+        reasoningTagHint: false,
+        runtimeInfo: {
+          host: "test-host",
+          os: "Darwin",
+          arch: "arm64",
+          node: "v22.0.0",
+          model: "openai/gpt-5.5",
+        },
+        tools: [],
+        modelAliasLines: [],
+        userTimezone: "UTC",
+        contextFiles: [],
+      },
+      providerTransform: baseProviderTransform,
+    });
+
+    expect(
+      result.baseSystemPrompt.startsWith("You are a memory search agent. OVERRIDE_MARKER"),
+    ).toBe(true);
+    const overrideIndex = result.baseSystemPrompt.indexOf("OVERRIDE_MARKER");
+    const memoryIndex = result.baseSystemPrompt.indexOf("## Memory Recall");
+    expect(overrideIndex).toBeGreaterThanOrEqual(0);
+    expect(memoryIndex).toBeGreaterThan(overrideIndex);
+  });
+
+  it("keeps the default memory section composition unaffected when systemPromptOverride is unset", () => {
+    // The non-override path must stay byte-identical to before this change:
+    // buildEmbeddedSystemPrompt still owns memory section placement.
+    registerMemoryPromptSection(() => ["## Memory Recall", "Use memory carefully."]);
+
+    const result = buildAttemptSystemPrompt({
+      isRawModelRun: false,
+      transformProviderSystemPrompt,
+      embeddedSystemPrompt: {
+        workspaceDir: "/tmp/openclaw",
+        reasoningTagHint: false,
+        runtimeInfo: {
+          host: "test-host",
+          os: "Darwin",
+          arch: "arm64",
+          node: "v22.0.0",
+          model: "openai/gpt-5.5",
+        },
+        tools: [],
+        modelAliasLines: [],
+        userTimezone: "UTC",
+        contextFiles: [],
+      },
+      providerTransform: baseProviderTransform,
+    });
+
+    expect(result.systemPrompt).toContain("## Memory Recall");
   });
 
   it("omits system prompts for raw model probes", () => {
