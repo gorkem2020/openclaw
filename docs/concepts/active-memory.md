@@ -592,8 +592,9 @@ thinking: "off"
 Do not enable this by default. Active Memory runs in the reply path, so extra
 thinking time directly increases user-visible latency.
 
-`config.promptAppend` adds extra operator instructions after the default Active
-Memory prompt and before the conversation context:
+`config.promptAppend` adds extra operator instructions at the end of the
+recall sub-run's static system prompt; the conversation context travels
+separately as the sub-run's user message:
 
 ```json5
 promptAppend: "Prefer stable long-term preferences over one-off events."
@@ -602,8 +603,8 @@ promptAppend: "Prefer stable long-term preferences over one-off events."
 Use `promptAppend` with custom `toolsAllow` when a non-core memory plugin needs
 provider-specific tool order or query-shaping instructions.
 
-`config.promptOverride` replaces the default Active Memory prompt. OpenClaw
-still appends the conversation context afterward:
+`config.promptOverride` replaces the default Active Memory system prompt.
+OpenClaw still sends the conversation context as the sub-run's user message:
 
 ```json5
 promptOverride: "You are a memory search agent. Return NONE or one compact user fact."

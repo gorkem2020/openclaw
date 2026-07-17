@@ -1954,8 +1954,9 @@ describe("active-memory plugin", () => {
     // The recall sub-run must not re-enter before_prompt_build (including this
     // plugin's own hook), or every plugin registered on that hook pays its cost
     // again on every recall. Confirm the opt-out is set while the extension's
-    // own prompt (instructions + promptAppend + query), which is built locally
-    // and never depends on before_prompt_build, still reaches the sub-run.
+    // own prompts (static instructions + promptAppend as the system prompt,
+    // query as the user prompt), which are built locally and never depend on
+    // before_prompt_build, still reach the sub-run.
     api.pluginConfig = {
       agents: ["main"],
       promptAppend: "Prefer stable long-term preferences over one-off events.",
