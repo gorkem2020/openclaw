@@ -289,4 +289,37 @@ describe("buildAttemptSystemPrompt", () => {
     expect(result.baseSystemPrompt).toContain("BOOTSTRAP.md is included below in Project Context");
     expect(result.systemPrompt).toBe("");
   });
+
+  it("submits the override text for raw model runs that supply systemPromptOverride", () => {
+    // Raw means "no BUILT prompt", not "no prompt at all": a trusted caller's
+    // explicit override is its own prompt and must reach the wire. Live
+    // regression 2026-07-17: the reflection distiller (modelRun: true +
+    // systemPromptOverride) went out with an empty system slot and produced
+    // conversational chat instead of a reflection.
+    const result = buildAttemptSystemPrompt({
+      isRawModelRun: true,
+      systemPromptOverride: "You are a memory reflection distiller. OVERRIDE_MARKER",
+      transformProviderSystemPrompt,
+      embeddedSystemPrompt: {
+        workspaceDir: "/tmp/openclaw",
+        reasoningTagHint: false,
+        runtimeInfo: {
+          host: "test-host",
+          os: "Darwin",
+          arch: "arm64",
+          node: "v22.0.0",
+          model: "openai/gpt-5.5",
+        },
+        tools: [],
+        modelAliasLines: [],
+        userTimezone: "UTC",
+        bootstrapMode: "full",
+        contextFiles: [],
+      },
+      providerTransform: baseProviderTransform,
+    });
+
+    expect(result.systemPrompt).toContain("OVERRIDE_MARKER");
+    expect(result.systemPrompt.startsWith("You are a memory reflection distiller.")).toBe(true);
+  });
 });

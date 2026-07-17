@@ -78,7 +78,10 @@ function composeOverrideSystemPrompt(params: {
 /**
  * Builds the embedded system prompt and applies provider-specific transforms
  * unless this is a raw model run. Raw runs still keep `baseSystemPrompt` for
- * diagnostics/cache boundaries, but submit an empty provider prompt.
+ * diagnostics/cache boundaries and submit an empty provider prompt — unless a
+ * trusted caller supplied `systemPromptOverride`: raw means "no BUILT prompt",
+ * not "no prompt at all", so an explicit override is the caller's own prompt
+ * and rides the raw run untransformed.
  */
 export function buildAttemptSystemPrompt(
   params: BuildAttemptSystemPromptParams,
@@ -91,7 +94,9 @@ export function buildAttemptSystemPrompt(
         })
       : buildEmbeddedSystemPrompt(params.embeddedSystemPrompt);
   const systemPrompt = params.isRawModelRun
-    ? ""
+    ? params.systemPromptOverride !== undefined
+      ? baseSystemPrompt
+      : ""
     : params.transformProviderSystemPrompt({
         provider: params.providerTransform.provider,
         config: params.providerTransform.config,
