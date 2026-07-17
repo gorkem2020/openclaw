@@ -1,4 +1,5 @@
 // Command queue serializes and limits process execution for shared command lanes.
+import { AsyncResource } from "node:async_hooks";
 import {
   diagnosticLogger as diag,
   logLaneDequeue,
@@ -483,9 +484,18 @@ export function enqueueCommandInLane<T>(
   const cleaned = normalizeLane(lane);
   const warnAfterMs = opts?.warnAfterMs ?? 2_000;
   const state = getLaneState(cleaned);
+  // Lane draining can run a queued task from inside a PRIOR task's own
+  // completion callback (see drainLane's pump()), outside the enqueuer's own
+  // async chain. AsyncResource.bind snapshots the enqueuer's AsyncLocalStorage
+  // context so a task run later by drainLane still sees it — otherwise a
+  // nested embedded run enqueued on a busy lane (e.g. active-memory's recall
+  // subagent, dispatched from inside a before_prompt_build hook) silently
+  // loses the promptBuildHookDispatchStorage reentrancy guard and re-runs
+  // before_prompt_build hooks for itself.
+  const boundTask = AsyncResource.bind(task);
   return new Promise<T>((resolve, reject) => {
     enqueueLaneEntry(state, {
-      task: () => task(),
+      task: () => boundTask(),
       resolve: (value) => resolve(value as T),
       reject,
       enqueuedAt: Date.now(),

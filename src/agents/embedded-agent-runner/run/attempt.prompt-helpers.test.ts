@@ -315,4 +315,42 @@ describe("shouldSkipPromptBuildHooks", () => {
     };
     expect(shouldSkipPromptBuildHooks(spoofedParams)).toBe(false);
   });
+
+  it("still skips hooks for a nested run whose dispatch was queued behind a busy command lane", async () => {
+    // The isolated tests above only prove the AsyncLocalStorage guard holds
+    // across a direct synchronous nesting. A real nested embedded run (e.g.
+    // active-memory's recall subagent, dispatched from inside this outer
+    // hook's own before_prompt_build handler) reaches shouldSkipPromptBuildHooks
+    // only after crossing the shared command-queue lane boundary
+    // (enqueueSession/enqueueGlobal -> enqueueCommandInLane). When that lane
+    // is busy, the queued task actually runs later from inside a PRIOR task's
+    // completion callback, not the enqueuer's own call stack — so this proves
+    // the guard survives that real crossing, not just direct async nesting.
+    const { enqueueCommandInLane, resetCommandQueueStateForTest } =
+      await import("../../../process/command-queue.js");
+    resetCommandQueueStateForTest();
+    const lane = `recall-lane-reentrancy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    let blockerResolve: (() => void) | undefined;
+    const blocker = new Promise<void>((resolve) => {
+      blockerResolve = resolve;
+    });
+    const busyTask = enqueueCommandInLane(lane, async () => {
+      await blocker;
+      return "busy";
+    });
+
+    let nestedSawSkip: boolean | undefined;
+    const nestedTask = runWithPromptBuildHookDispatch(() =>
+      enqueueCommandInLane(lane, async () => {
+        nestedSawSkip = shouldSkipPromptBuildHooks({ isRawModelRun: false });
+        return "nested";
+      }),
+    );
+
+    blockerResolve?.();
+    await expect(busyTask).resolves.toBe("busy");
+    await expect(nestedTask).resolves.toBe("nested");
+    expect(nestedSawSkip).toBe(true);
+  });
 });

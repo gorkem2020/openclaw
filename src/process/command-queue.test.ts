@@ -1,4 +1,5 @@
 // Command queue tests cover bounded command execution and queue ordering.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandLane } from "./lanes.js";
@@ -936,5 +937,40 @@ describe("command queue", () => {
       blocker.resolve();
       commandQueueA.resetAllLanes();
     }
+  });
+
+  it("preserves the enqueuer's AsyncLocalStorage context for a task queued behind a busy lane", async () => {
+    // A task dequeued by drainLane's pump() runs from inside a PRIOR task's
+    // own completion callback when the lane was busy at enqueue time, not
+    // from the enqueuer's own call stack. Without AsyncResource.bind, callers
+    // that rely on AsyncLocalStorage to detect "I am nested inside an
+    // in-flight dispatch" (e.g. the embedded-agent-runner's before_prompt_build
+    // reentrancy guard) silently lose that signal whenever the lane is
+    // contended, which real production traffic hits routinely.
+    const store = new AsyncLocalStorage<boolean>();
+    const lane = `alc-probe-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const blockerA = createDeferred();
+
+    const taskA = enqueueCommandInLane(lane, async () => {
+      await blockerA.promise;
+      return "A";
+    });
+
+    // Lane is now busy with task A (default concurrency is 1), so task B
+    // below is queued rather than run immediately.
+    expect(getCommandLaneSnapshot(lane).activeCount).toBe(1);
+
+    let bSawContext: boolean | undefined;
+    const taskB = store.run(true, () =>
+      enqueueCommandInLane(lane, async () => {
+        bSawContext = store.getStore();
+        return "B";
+      }),
+    );
+
+    blockerA.resolve();
+    await expect(taskA).resolves.toBe("A");
+    await expect(taskB).resolves.toBe("B");
+    expect(bSawContext).toBe(true);
   });
 });
