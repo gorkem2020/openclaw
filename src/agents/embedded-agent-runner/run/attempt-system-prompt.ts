@@ -4,6 +4,7 @@
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { ProviderTransformSystemPromptContext } from "../../../plugins/types.js";
 import { buildAgentMemorySystemPromptSection } from "../../system-prompt.js";
+import { log } from "../logger.js";
 import { buildEmbeddedSystemPrompt } from "../system-prompt.js";
 
 type EmbeddedSystemPromptParams = Parameters<typeof buildEmbeddedSystemPrompt>[0];
@@ -47,18 +48,30 @@ type AttemptSystemPrompt = {
  * The override text stays first so the trusted caller's identity is not
  * diluted by unrelated guidance; the memory section (if any) is appended at
  * the bottom rather than dropped.
+ *
+ * Before this composition existed, the override path never called a
+ * registered memory promptBuilder at all, so a throwing plugin callback
+ * could not affect it. That promptBuilder is caller-authored plugin code
+ * this module does not control, so a failure computing the memory section
+ * must degrade to the override text alone, never take the whole attempt
+ * down and drop the override with it.
  */
 function composeOverrideSystemPrompt(params: {
   override: string;
   embeddedSystemPrompt: EmbeddedSystemPromptParams;
 }): string {
-  const memorySection = buildAgentMemorySystemPromptSection({
-    toolNames: params.embeddedSystemPrompt.tools.map((tool) => tool.name),
-    capabilityToolNames: params.embeddedSystemPrompt.capabilityToolNames,
-    promptMode: params.embeddedSystemPrompt.promptMode,
-    includeMemorySection: params.embeddedSystemPrompt.includeMemorySection,
-    memoryCitationsMode: params.embeddedSystemPrompt.memoryCitationsMode,
-  });
+  let memorySection = "";
+  try {
+    memorySection = buildAgentMemorySystemPromptSection({
+      toolNames: params.embeddedSystemPrompt.tools.map((tool) => tool.name),
+      capabilityToolNames: params.embeddedSystemPrompt.capabilityToolNames,
+      promptMode: params.embeddedSystemPrompt.promptMode,
+      includeMemorySection: params.embeddedSystemPrompt.includeMemorySection,
+      memoryCitationsMode: params.embeddedSystemPrompt.memoryCitationsMode,
+    });
+  } catch (err) {
+    log.warn(`systemPromptOverride memory-section composition failed: ${String(err)}`);
+  }
   return memorySection ? `${params.override}\n\n${memorySection}` : params.override;
 }
 
