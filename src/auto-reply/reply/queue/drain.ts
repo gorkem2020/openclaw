@@ -43,6 +43,11 @@ import {
   previewQueueSummaryPrompt,
   waitForQueueDebounce,
 } from "../../../utils/queue-helpers.js";
+import {
+  bindReplyCompletionHandoffToQueuedRun,
+  replaceReplyCompletionQueuePredecessor,
+  type ReplyCompletionHandoff,
+} from "../reply-completion-handoff.js";
 import { isRoutableChannel } from "../route-reply.js";
 import { clearFollowupQueue, FOLLOWUP_QUEUES, trimSummaryElisionsToCap } from "./state.js";
 import {
@@ -1464,8 +1469,14 @@ async function drainOverflowSummaryGroup(params: {
 export function scheduleFollowupDrain(
   key: string,
   runFollowup: (run: FollowupRun) => Promise<void>,
+  completion?: { predecessorHandoff?: ReplyCompletionHandoff },
 ): void {
   const existingQueue = FOLLOWUP_QUEUES.get(key);
+  if (existingQueue && completion) {
+    // The concrete queue owner follows every actual predecessor, even while an
+    // older drain callback is still active for A -> B -> C execution.
+    replaceReplyCompletionQueuePredecessor(existingQueue, completion.predecessorHandoff);
+  }
   if (existingQueue?.draining) {
     // The active drain keeps its current callback, but deferred retries must
     // use the latest session/runtime context supplied by the finishing run.
@@ -1478,7 +1489,11 @@ export function scheduleFollowupDrain(
   }
   const drainOwner = {};
   queue.drainOwner = drainOwner;
-  const effectiveRunFollowup = FOLLOWUP_RUN_CALLBACKS.get(key) ?? runFollowup;
+  const baseRunFollowup = FOLLOWUP_RUN_CALLBACKS.get(key) ?? runFollowup;
+  const effectiveRunFollowup = async (run: FollowupRun) => {
+    bindReplyCompletionHandoffToQueuedRun({ owner: queue, queueKey: key, queued: run });
+    return await baseRunFollowup(run);
+  };
   const reserveOptions = {
     inFlight: queue.inFlight,
     shouldRestoreOnError: () =>
@@ -1487,7 +1502,7 @@ export function scheduleFollowupDrain(
   };
   // Cache callback only when a drain actually starts. Avoid keeping stale
   // callbacks around from finalize calls where no queue work is pending.
-  rememberFollowupDrainCallback(key, effectiveRunFollowup);
+  rememberFollowupDrainCallback(key, baseRunFollowup);
   const drainQueuedFollowups = async (): Promise<void> => {
     let retryDeferred = false;
     let waitingForSteer = false;
@@ -1740,15 +1755,16 @@ export function scheduleFollowupDrain(
         const hasPendingQueueWork = queue.items.length > 0 || queue.droppedCount > 0;
         if (waitingForSteer && hasPendingQueueWork) {
           if (!queue.items.some((item) => item.steerPending)) {
-            scheduleFollowupDrain(key, effectiveRunFollowup);
+            scheduleFollowupDrain(key, baseRunFollowup);
           }
         } else if (retryDeferred && hasPendingQueueWork) {
-          scheduleFollowupDrain(key, effectiveRunFollowup);
+          scheduleFollowupDrain(key, baseRunFollowup);
         } else if (!hasPendingQueueWork) {
+          replaceReplyCompletionQueuePredecessor(queue, undefined);
           FOLLOWUP_QUEUES.delete(key);
           clearFollowupDrainCallback(key);
         } else {
-          scheduleFollowupDrain(key, effectiveRunFollowup);
+          scheduleFollowupDrain(key, baseRunFollowup);
         }
       }
     }
