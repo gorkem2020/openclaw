@@ -7,6 +7,7 @@ import {
   withPluginRuntimeGatewayContextResolver,
 } from "../../plugins/runtime/gateway-request-scope.js";
 import { defaultRuntime } from "../../runtime.js";
+import { scheduleFollowupDrainAfterReplyOperationClear } from "./agent-runner-core.js";
 import { accountFollowupTurn } from "./agent-runner-result-accounting.js";
 import { deliverFollowupDecision, resolveFollowupDeliveryDecision } from "./followup-delivery.js";
 import {
@@ -89,6 +90,13 @@ export function createFollowupRunner(
       admittedRunId = turn.runId;
       operation = turn.operation;
       queuedFollowupAdmitted = true;
+      // Every admitted successor becomes the predecessor for the remaining queue.
+      // Register before clear so its delivery fact replaces the prior owner atomically.
+      scheduleFollowupDrainAfterReplyOperationClear({
+        operation,
+        queueKey: operation.key,
+        runFollowup,
+      });
       const execution = await executeFollowupTurn({
         turn,
         defaults,

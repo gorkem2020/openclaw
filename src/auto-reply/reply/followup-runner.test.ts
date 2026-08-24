@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   admit: vi.fn(),
   completeLifecycle: vi.fn(),
   completedSourceDelivery: false,
+  scheduleAfterClear: vi.fn(),
   deliver: vi.fn(),
   execute: vi.fn(),
   resolveDecision: vi.fn(),
@@ -25,6 +26,11 @@ vi.mock("../../infra/agent-run-registry.js", () => ({
 
 vi.mock("../../agents/embedded-agent-runner/delivery-evidence.js", () => ({
   hasCompletedSourceReplyDeliveryEvidence: () => state.completedSourceDelivery,
+}));
+
+vi.mock("./agent-runner-core.js", () => ({
+  scheduleFollowupDrainAfterReplyOperationClear: (...args: unknown[]) =>
+    state.scheduleAfterClear(...args),
 }));
 
 vi.mock("./agent-runner-result-accounting.js", () => ({
@@ -100,6 +106,7 @@ function createTurn(
   result: AdmittedFollowupTurn["operation"]["result"] = null,
 ) {
   const operation = {
+    key: "main",
     result,
     complete: vi.fn(() => order.push("operation-complete")),
     fail: vi.fn(() => order.push("operation-failed")),
@@ -323,6 +330,7 @@ describe("createFollowupRunner", () => {
       order.push("delivered");
     });
     state.completeLifecycle.mockImplementation(() => order.push("lifecycle-complete"));
+    state.scheduleAfterClear.mockImplementation(() => order.push("handoff-registered"));
 
     await createFollowupRunner({
       typing,
@@ -336,6 +344,7 @@ describe("createFollowupRunner", () => {
     })(turn.queued);
 
     expect(order).toEqual([
+      "handoff-registered",
       "progress-drained",
       "accounted",
       "decision",
@@ -344,6 +353,11 @@ describe("createFollowupRunner", () => {
       "lifecycle-complete",
       "operation-complete",
     ]);
+    expect(state.scheduleAfterClear).toHaveBeenCalledWith({
+      operation: turn.operation,
+      queueKey: "main",
+      runFollowup: expect.any(Function),
+    });
     expect(state.clearRunContext).toHaveBeenCalledWith("run-1");
   });
 
