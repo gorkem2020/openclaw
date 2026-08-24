@@ -31,8 +31,8 @@ import {
   createQueueTestRun as createRun,
   installQueueRuntimeErrorSilencer,
 } from "./queue.test-helpers.js";
-import { resetRecentQueuedMessageIdDedupe } from "./queue/enqueue.test-support.js";
 import { resolveFollowupReplyDeliveryTargetKey } from "./queue/delivery-target.js";
+import { resetRecentQueuedMessageIdDedupe } from "./queue/enqueue.test-support.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "./queue/state.js";
 import {
   consumeQueuedReplyCompletionHandoff,
@@ -66,7 +66,9 @@ function createCompletionHandoff(key: string): ReplyCompletionHandoff {
     ownerKey: key,
     ownerSessionId: "session-1",
     ownerLifecycleGeneration: getAgentEventLifecycleGeneration(),
-    deliveryTargetKey: resolveFollowupReplyDeliveryTargetKey(createCompletionEligibleRun(key, "source")),
+    deliveryTargetKey: resolveFollowupReplyDeliveryTargetKey(
+      createCompletionEligibleRun(key, "source"),
+    ),
   });
 }
 
