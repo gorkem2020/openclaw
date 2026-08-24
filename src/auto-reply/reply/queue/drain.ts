@@ -32,7 +32,6 @@ import {
 } from "../../../sessions/user-turn-transcript.js";
 import { extractTextFromChatContent } from "../../../shared/chat-content.js";
 import { resolveGlobalMap, resolveGlobalSingleton } from "../../../shared/global-singleton.js";
-import { normalizeMessageChannel } from "../../../utils/message-channel.js";
 import {
   buildCollectPrompt,
   beginQueueDrain,
@@ -49,6 +48,10 @@ import {
   type ReplyCompletionHandoff,
 } from "../reply-completion-handoff.js";
 import { isRoutableChannel } from "../route-reply.js";
+import {
+  resolveFollowupReplyAnchor,
+  resolveFollowupReplyDeliveryTargetKey,
+} from "./delivery-target.js";
 import { clearFollowupQueue, FOLLOWUP_QUEUES, trimSummaryElisionsToCap } from "./state.js";
 import {
   admitFollowupRunLifecycle,
@@ -353,19 +356,10 @@ export function resolveFollowupDeliveryContextKey(run: FollowupRun): string {
   const execution = run.run;
   const provenance = execution.inputProvenance;
   return JSON.stringify([
-    channelRouteDedupeKey({
-      channel: run.originatingChannel,
-      to: run.originatingTo,
-      accountId: run.originatingAccountId,
-      threadId: run.originatingThreadId,
-    }),
+    resolveFollowupReplyDeliveryTargetKey(run),
     hasPreparedCurrentTurnImages(run),
     // Approved sources skip the write hook; never carry unstaged input past it.
     Boolean(run.userTurnTranscriptRecorder?.getPendingInputMessage?.()),
-    run.originatingChatId ?? "",
-    resolveFollowupReplyAnchor(run) ?? "",
-    run.originatingReplyToMode ?? "",
-    normalizeChatType(run.originatingChatType) ?? "",
     resolveFollowupAuthorizationKey(run),
     run.turnAdoptionLifecycle?.ownerKey ?? "",
     normalizeOptionalString(execution.runtimePolicySessionKey ?? execution.sessionKey) ?? "",
@@ -422,25 +416,6 @@ export function resolveFollowupDeliveryContextKey(run: FollowupRun): string {
     execution.blockReplyBreak,
     resolveTurnAdoptionLifecycleDeliveryKey(run.turnAdoptionLifecycle),
   ]);
-}
-
-export function resolveFollowupReplyAnchor(run: FollowupRun): string | undefined {
-  if (run.originatingReplyToMode === "off") {
-    return undefined;
-  }
-  const replyToId = normalizeOptionalString(run.originatingReplyToId);
-  if (replyToId || normalizeMessageChannel(run.originatingChannel) !== "slack") {
-    return replyToId;
-  }
-  const threadId = run.originatingThreadId;
-  const hasRoutedThread =
-    typeof threadId === "number"
-      ? Number.isFinite(threadId)
-      : normalizeOptionalString(threadId) !== undefined;
-  // Slack standalone turns have no parent reply id, but enabled reply policies
-  // still need the message id so collect groups cannot cross independent roots.
-  // A routed thread already owns that boundary and remains collectable across turns.
-  return hasRoutedThread ? undefined : normalizeOptionalString(run.messageId);
 }
 
 function splitCollectItemsByDeliveryContext(items: FollowupRun[]): FollowupRun[][] {

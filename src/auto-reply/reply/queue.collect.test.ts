@@ -31,6 +31,7 @@ import {
   createQueueTestRun as createRun,
   installQueueRuntimeErrorSilencer,
 } from "./queue.test-helpers.js";
+import { resolveFollowupReplyDeliveryTargetKey } from "./queue/delivery-target.js";
 import { resolveFollowupDeliveryContextKey } from "./queue/drain.js";
 import { clearFollowupQueue, getExistingFollowupQueue } from "./queue/state.js";
 import type { ReplyOperationRunState } from "./reply-operation-run-state.js";
@@ -1731,7 +1732,13 @@ describe("followup queue collect routing", () => {
       ownerKey: key,
       ownerSessionId: "session-1",
       ownerLifecycleGeneration: generation,
-      route: Object.freeze({ channel: "telegram", to: "chat-1", accountId: "primary" }),
+      deliveryTargetKey: resolveFollowupReplyDeliveryTargetKey(
+        createRun({
+          originatingChannel: "telegram",
+          originatingTo: "chat-1",
+          originatingAccountId: "primary",
+        }),
+      ),
     });
     const consumer = {
       key,

@@ -1,6 +1,5 @@
 // Enqueues follow-up reply runs and schedules queue drains.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { normalizeChatType } from "../../../channels/chat-type.js";
 import { logMessageQueuedWithBacklogPolicy } from "../../../logging/diagnostic-runtime.js";
 import { channelRouteDedupeKey } from "../../../plugin-sdk/channel-route.js";
 import { extractTextFromChatContent } from "../../../shared/chat-content.js";
@@ -10,13 +9,13 @@ import {
   countPendingQueueItems,
   shouldSkipQueueItem,
 } from "../../../utils/queue-helpers.js";
+import { resolveFollowupReplyDeliveryTargetKey } from "./delivery-target.js";
 import {
   clearFollowupDrainCallback,
   createOverflowSummaryRetrySource,
   kickFollowupDrainIfIdle,
   rememberFollowupDrainCallback,
   resolveFollowupDeliveryContextKey,
-  resolveFollowupReplyAnchor,
 } from "./drain.js";
 import {
   peekRecentQueueMessageId,
@@ -40,17 +39,7 @@ import {
 } from "./types.js";
 
 function followupRouteIdentityKey(run: FollowupRun): string {
-  return JSON.stringify([
-    channelRouteDedupeKey({
-      channel: run.originatingChannel,
-      to: run.originatingTo,
-      accountId: run.originatingAccountId,
-      threadId: run.originatingThreadId,
-    }),
-    resolveFollowupReplyAnchor(run) ?? "",
-    run.originatingReplyToMode ?? "",
-    normalizeChatType(run.originatingChatType) ?? "",
-  ]);
+  return resolveFollowupReplyDeliveryTargetKey(run);
 }
 
 function followupMessageRouteIdentityKey(run: FollowupRun): string {
