@@ -1722,6 +1722,8 @@ describe("runReplyAgent heartbeat followup guard", () => {
       const queued = createMinimalRun({
         currentInboundEventKind: "user_request",
         isActive: true,
+        // Queued questions must not rebind the owner's admitted tool authority.
+        bindActiveAuthority: false,
         isRunActive: () => true,
         shouldFollowup: true,
         resolvedQueueMode: "collect",
