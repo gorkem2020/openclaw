@@ -17,6 +17,20 @@ describe("resolveSlackAvatarDownloadUrl", () => {
     );
   });
 
+  it("takes the fallback from any Gravatar host", () => {
+    const url =
+      "https://www.gravatar.com/avatar/0123456789abcdef.jpg?d=https%3A%2F%2Fa.slack-edge.com%2Fdf10d%2Fimg%2Favatars%2Fava_0001-192.png";
+    expect(resolveSlackAvatarDownloadUrl(url, allowlist)).toBe(
+      "https://a.slack-edge.com/df10d/img/avatars/ava_0001-192.png",
+    );
+  });
+
+  it("ignores the fallback parameter of a host that is not Gravatar", () => {
+    const url =
+      "https://cdn.example.com/avatar.png?d=https%3A%2F%2Fa.slack-edge.com%2Fdf10d%2Fimg%2Favatars%2Fava_0001-192.png";
+    expect(resolveSlackAvatarDownloadUrl(url, allowlist)).toBeUndefined();
+  });
+
   it("rejects a fallback whose host is outside the allowlist", () => {
     const url =
       "https://secure.gravatar.com/avatar/0123456789abcdef.jpg?d=https%3A%2F%2Fcdn.example.com%2Fdefault.png";
