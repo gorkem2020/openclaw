@@ -22,10 +22,12 @@ vi.mock("./media.runtime.js", async (importOriginal) => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function createTestContext(params?: {
@@ -462,9 +464,8 @@ describe("createSlackMonitorContext channel metadata cache", () => {
     );
 
     download.resolve({ path: "/media/inbound/slack-avatar-fallback.png" });
-    await vi.waitFor(() =>
-      expect(ctx.resolveUserAvatar("U2")).toBe("/media/inbound/slack-avatar-fallback.png"),
-    );
+    await download.promise;
+    expect(ctx.resolveUserAvatar("U2")).toBe("/media/inbound/slack-avatar-fallback.png");
   });
 
   it("never requests a profile image outside the allowlist and does not retry it", async () => {
@@ -482,7 +483,8 @@ describe("createSlackMonitorContext channel metadata cache", () => {
   });
 
   it("remembers a failed avatar download instead of retrying it on the next message", async () => {
-    saveRemoteMediaMock.mockRejectedValue(new Error("download failed"));
+    const download = deferred<{ path: string }>();
+    saveRemoteMediaMock.mockReturnValue(download.promise);
     const usersInfo = vi.fn().mockResolvedValue({
       user: {
         profile: { display_name: "Alex", image_192: "https://avatars.slack-edge.com/alex-192.png" },
@@ -494,10 +496,10 @@ describe("createSlackMonitorContext channel metadata cache", () => {
 
     await ctx.resolveUserName("U4");
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
-    await vi.waitFor(() => expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1));
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1);
+
+    download.reject(new Error("download failed"));
+    await download.promise.catch(() => undefined);
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
     expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1);
