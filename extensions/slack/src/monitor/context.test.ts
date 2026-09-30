@@ -352,7 +352,7 @@ describe("Slack monitor context", () => {
   });
 
   it("downloads the Slack-hosted fallback when the profile image is served through Gravatar", async () => {
-    const download = deferred<{ path: string }>();
+    const download = createDeferred<{ path: string }>();
     saveRemoteMediaMock.mockReturnValue(download.promise);
     const gravatarUrl =
       "https://secure.gravatar.com/avatar/0123456789abcdef.jpg?s=192&d=https%3A%2F%2Fa.slack-edge.com%2Fdf10d%2Fimg%2Favatars%2Fava_0001-192.png";
@@ -377,9 +377,8 @@ describe("Slack monitor context", () => {
     );
 
     download.resolve({ path: "/media/inbound/slack-avatar-fallback.png" });
-    await vi.waitFor(() =>
-      expect(ctx.resolveUserAvatar("U2")).toBe("/media/inbound/slack-avatar-fallback.png"),
-    );
+    await download.promise;
+    expect(ctx.resolveUserAvatar("U2")).toBe("/media/inbound/slack-avatar-fallback.png");
   });
 
   it("never requests a profile image outside the allowlist and does not retry it", async () => {
@@ -397,7 +396,8 @@ describe("Slack monitor context", () => {
   });
 
   it("remembers a failed avatar download instead of retrying it on the next message", async () => {
-    saveRemoteMediaMock.mockRejectedValue(new Error("download failed"));
+    const download = createDeferred<{ path: string }>();
+    saveRemoteMediaMock.mockReturnValue(download.promise);
     const usersInfo = vi.fn().mockResolvedValue({
       user: {
         profile: { display_name: "Alex", image_192: "https://avatars.slack-edge.com/alex-192.png" },
@@ -409,10 +409,10 @@ describe("Slack monitor context", () => {
 
     await ctx.resolveUserName("U4");
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
-    await vi.waitFor(() => expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1));
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1);
+
+    download.reject(new Error("download failed"));
+    await download.promise.catch(() => undefined);
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
     expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1);
