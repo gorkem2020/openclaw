@@ -468,7 +468,7 @@ describe("createSlackMonitorContext channel metadata cache", () => {
     expect(ctx.resolveUserAvatar("U2")).toBe("/media/inbound/slack-avatar-fallback.png");
   });
 
-  it("never requests a profile image outside the allowlist and does not retry it", async () => {
+  it("never requests a profile image outside the allowlist", async () => {
     const usersInfo = vi.fn().mockResolvedValue({
       user: { profile: { display_name: "Lee Chen", image_192: "https://cdn.example.com/lee.png" } },
     });
@@ -499,8 +499,7 @@ describe("createSlackMonitorContext channel metadata cache", () => {
     expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1);
 
     download.reject(new Error("download failed"));
-    await download.promise.catch(() => undefined);
-    expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
+    await expect(download.promise).rejects.toThrow("download failed");
     expect(ctx.resolveUserAvatar("U4")).toBeUndefined();
     expect(saveRemoteMediaMock).toHaveBeenCalledTimes(1);
   });
