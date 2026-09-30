@@ -376,20 +376,20 @@ function createSlackMonitorContextFields(
       filePathHint: "conversation-avatar.png",
       maxBytes: SLACK_AVATAR_MAX_BYTES,
       ssrfPolicy: SLACK_AVATAR_SSRF_POLICY,
-    })
-      .then((media) => {
+    }).then(
+      (media) => {
+        pendingAvatars.delete(cacheKey);
         writeLruMapEntry(avatarCache, cacheKey, media.path, SLACK_AVATAR_CACHE_MAX_ENTRIES);
-      })
-      .catch((error: unknown) => {
+      },
+      (error: unknown) => {
+        pendingAvatars.delete(cacheKey);
         failedAvatars.check(cacheKey);
         logger.debug(
           { error: formatSlackError(error), userId },
           "Slack conversation avatar download failed",
         );
-      })
-      .finally(() => {
-        pendingAvatars.delete(cacheKey);
-      });
+      },
+    );
     return undefined;
   };
 
