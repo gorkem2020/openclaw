@@ -20,6 +20,7 @@ import {
   countLivePluginStateNamespaceEntries,
   deleteExpiredPluginStateEntries,
   deletePluginStateEntry,
+  hasDuePluginStateEntries,
   lookupPluginStateEntry,
 } from "./plugin-state-store.kernel.js";
 import {
@@ -139,6 +140,13 @@ export function executePluginStateCommand(
     return ok(
       runOpenClawStateWriteTransaction(
         (store) => {
+          if (
+            command.type === "pluginState.sweep" &&
+            !hasDuePluginStateEntries(store.db, Date.now())
+          ) {
+            // Nothing due means no row mutation, so the writer never waits on host authority.
+            return 0;
+          }
           requestSqliteWorkerOperationAdmission({ stage: "transaction", facts: undefined });
           const result = (() => {
             switch (command.type) {

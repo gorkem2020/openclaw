@@ -311,6 +311,30 @@ const pluginStateExpiryQueries = new WeakMap<
   ReturnType<typeof prepareSqliteQuerySync<number, { expires_at: number | bigint | null }>>
 >();
 
+/** The expiry index can prove there is nothing due without scanning any namespace. */
+export function hasDuePluginStateEntries(db: DatabaseSync, now: number): boolean {
+  let query = pluginStateExpiryQueries.get(db);
+  if (!query) {
+    query = prepareSqliteQuerySync<number, { expires_at: number | bigint | null }>(
+      db,
+      (parameter) =>
+        getPluginStateKysely(db)
+          .selectFrom("plugin_state_entries")
+          .select("expires_at")
+          .where("expires_at", "is not", null)
+          .where(
+            "expires_at",
+            "<=",
+            parameter((value) => value),
+          )
+          .limit(1),
+    );
+    pluginStateExpiryQueries.set(db, query);
+  }
+  // Only compilation is retained; expiry is checked in the caller's current transaction.
+  return query(now).rows.length > 0;
+}
+
 export function deleteExpiredPluginStateEntries(
   db: DatabaseSync,
   now: number,
@@ -319,32 +343,10 @@ export function deleteExpiredPluginStateEntries(
   if (scope && isRetainedPluginStateNamespace(scope.namespace)) {
     return 0;
   }
-  const kysely = getPluginStateKysely(db);
-  if (scope) {
-    let query = pluginStateExpiryQueries.get(db);
-    if (!query) {
-      query = prepareSqliteQuerySync<number, { expires_at: number | bigint | null }>(
-        db,
-        (parameter) =>
-          kysely
-            .selectFrom("plugin_state_entries")
-            .select("expires_at")
-            .where("expires_at", "is not", null)
-            .where(
-              "expires_at",
-              "<=",
-              parameter((value) => value),
-            )
-            .limit(1),
-      );
-      pluginStateExpiryQueries.set(db, query);
-    }
-    // The expiry index can prove there is nothing due without scanning the namespace.
-    // Only compilation is retained; expiry is checked in the caller's current transaction.
-    if (query(now).rows.length === 0) {
-      return 0;
-    }
+  if (scope && !hasDuePluginStateEntries(db, now)) {
+    return 0;
   }
+  const kysely = getPluginStateKysely(db);
   let expiredEntries = kysely
     .selectFrom("plugin_state_entries")
     .select(["plugin_id", "namespace", "entry_key"])
