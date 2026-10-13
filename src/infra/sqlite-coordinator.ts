@@ -271,6 +271,18 @@ function retainIdleCoordinator(location: string, database: DatabaseSync, identit
   return true;
 }
 
+// A lifecycle holder may need grants that only run between slices, and SQLite's busy handler
+// retries only at cumulative 1, 3, 8, 18, 33, 53, 78, 103 ms: short slices bound both delays.
+const EXCLUSIVE_WAIT_FINE_SLICE_MS = 2;
+const EXCLUSIVE_WAIT_FINE_WINDOW_MS = 250;
+const EXCLUSIVE_WAIT_SLICE_MS = 25;
+
+function exclusiveWaitSliceMs(waitedMs: number): number {
+  return waitedMs < EXCLUSIVE_WAIT_FINE_WINDOW_MS
+    ? EXCLUSIVE_WAIT_FINE_SLICE_MS
+    : EXCLUSIVE_WAIT_SLICE_MS;
+}
+
 function tryAcquireSqliteCoordinator(
   location: string,
   mode: "shared" | "exclusive",
@@ -299,11 +311,14 @@ function tryAcquireSqliteCoordinator(
     // journal in memory so acquiring a lock does not create filesystem artifacts.
     const services =
       mode === "exclusive" ? sqliteWriteAdmissionServicesForLocation(location) : undefined;
-    const deadline = performance.now() + busyTimeoutMs;
+    const startedAt = performance.now();
+    const deadline = startedAt + busyTimeoutMs;
     for (;;) {
-      const attemptTimeout = services
-        ? Math.min(25, Math.max(0, Math.ceil(deadline - performance.now())))
-        : busyTimeoutMs;
+      const now = performance.now();
+      const attemptTimeout =
+        mode === "exclusive"
+          ? Math.min(exclusiveWaitSliceMs(now - startedAt), Math.max(0, Math.ceil(deadline - now)))
+          : busyTimeoutMs;
       try {
         database.exec(
           `PRAGMA busy_timeout = ${attemptTimeout}; PRAGMA journal_mode = MEMORY; ${
@@ -314,10 +329,10 @@ function tryAcquireSqliteCoordinator(
         );
         break;
       } catch (error) {
-        if (!services || !isSqliteLockError(error) || performance.now() >= deadline) {
+        if (mode !== "exclusive" || !isSqliteLockError(error) || performance.now() >= deadline) {
           throw error;
         }
-        for (const service of services) {
+        for (const service of services ?? []) {
           service();
         }
       }
