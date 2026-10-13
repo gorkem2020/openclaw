@@ -85,14 +85,29 @@ type StateDatabaseCoordinatorLease = {
   release: () => void;
 };
 
+let macosCoordinatorRuntimeDirectory: string | undefined;
+
 export function resolveStateLifecycleRuntimeDirectory(): string {
   const captured = coordinatorRuntimeDirectories.getStore();
   if (captured !== undefined) {
     return captured.directory;
   }
-  return process.platform === "win32"
-    ? path.join(os.homedir(), "AppData", "Local", "OpenClaw", "locks")
-    : "/tmp";
+  if (process.platform === "win32") {
+    return path.join(os.homedir(), "AppData", "Local", "OpenClaw", "locks");
+  }
+  if (process.platform !== "darwin") {
+    return "/tmp";
+  }
+  // macOS tmp_cleaner deletes /tmp files untouched for three days, even while a process holds them.
+  // The account home (not $HOME) keeps every process of this user on one path, as /tmp did.
+  macosCoordinatorRuntimeDirectory ??= path.join(
+    os.userInfo().homedir,
+    "Library",
+    "Application Support",
+    "OpenClaw",
+    "locks",
+  );
+  return macosCoordinatorRuntimeDirectory;
 }
 
 /** Capture the directory owner's retention policy before crossing an async or worker boundary. */

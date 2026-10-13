@@ -1265,6 +1265,7 @@ function runConcurrentSchemaProbe(params: {
             import(new URL("../infra/crypto-digest.ts", moduleUrl).href),
             import(new URL("../infra/sqlite-coordinator.ts", moduleUrl).href),
             import(new URL("./openclaw-state-db-contract.ts", moduleUrl).href),
+            import(new URL("../infra/state-database-coordinator.ts", moduleUrl).href),
           ])
         : undefined;
 
@@ -1332,9 +1333,12 @@ function runConcurrentSchemaProbe(params: {
         { sha256HexPrefixCore },
         { ensurePrivateSqliteCoordinatorDirectory },
         { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS },
+        { resolveStateLifecycleRuntimeDirectory },
       ] = coordinatorContracts;
       const canonicalDatabasePath = resolvePathViaExistingAncestorSync(databasePath);
-      const canonicalRuntimeDirectory = resolvePathViaExistingAncestorSync("/tmp");
+      const canonicalRuntimeDirectory = resolvePathViaExistingAncestorSync(
+        resolveStateLifecycleRuntimeDirectory(),
+      );
       const suffix = typeof process.getuid === "function"
         ? \`openclaw-state-locks-\${process.getuid()}\`
         : "openclaw-state-locks";

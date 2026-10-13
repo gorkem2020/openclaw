@@ -97,13 +97,20 @@ function snapshotSqliteFamily(databasePath: string) {
   };
 }
 
+function resolveExpectedRuntimeDirectory(): string {
+  if (process.platform === "win32") {
+    return path.join(os.homedir(), "AppData", "Local", "OpenClaw", "locks");
+  }
+  return process.platform === "darwin"
+    ? path.join(os.userInfo().homedir, "Library", "Application Support", "OpenClaw", "locks")
+    : "/tmp";
+}
+
 function resolveExpectedOwnershipCoordinatorPath(databasePath: string): string {
   const canonicalDatabasePath = resolvePathViaExistingAncestorSync(databasePath);
-  const runtimeDirectory =
-    process.platform === "win32"
-      ? path.join(os.homedir(), "AppData", "Local", "OpenClaw", "locks")
-      : "/tmp";
-  const canonicalRuntimeDirectory = resolvePathViaExistingAncestorSync(runtimeDirectory);
+  const canonicalRuntimeDirectory = resolvePathViaExistingAncestorSync(
+    resolveExpectedRuntimeDirectory(),
+  );
   const suffix =
     typeof process.getuid === "function"
       ? `openclaw-state-locks-${process.getuid()}`
