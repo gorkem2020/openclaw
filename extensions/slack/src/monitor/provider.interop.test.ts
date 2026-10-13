@@ -232,6 +232,43 @@ describe("createSlackBoltApp", () => {
     }
   });
 
+  it("reports Slack disconnect requests at info with the account and keeps other SDK debug quiet", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    try {
+      const { socketModeLogger } = createSlackBoltApp({
+        interop: {
+          App: FakeApp as never,
+          HTTPReceiver: FakeHTTPReceiver as never,
+          SocketModeReceiver: FakeSocketModeReceiver as never,
+        },
+        accountId: "acct-one",
+        slackMode: "socket",
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        slackWebhookPath: "/slack/events",
+        clientOptions: {},
+      });
+
+      socketModeLogger.setName("SlackWebSocket:1");
+      socketModeLogger.debug("Sending close frame (status=1000).");
+      socketModeLogger.debug(
+        'Received "disconnect" (refresh_requested) message - disconnecting. Will reconnect.',
+      );
+
+      expect(debug).not.toHaveBeenCalled();
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith(
+        "socket-mode:SlackWebSocket:1",
+        "[account acct-one]",
+        'Received "disconnect" (refresh_requested) message - disconnecting. Will reconnect.',
+      );
+    } finally {
+      info.mockRestore();
+      debug.mockRestore();
+    }
+  });
+
   it("applies OpenClaw self-event filtering through installed Bolt middleware", async () => {
     const { app } = createSlackBoltApp({
       interop: {

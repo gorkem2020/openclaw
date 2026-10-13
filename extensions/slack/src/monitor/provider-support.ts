@@ -30,6 +30,7 @@ const SLACK_SOCKET_PONG_TIMEOUT_WARNING_PREFIX = "A pong wasn't received from th
 const SLACK_SOCKET_PING_TIMEOUT_WARNING_PREFIX = "A ping wasn't received from the server";
 const SLACK_SOCKET_LOG_LEVEL_IGNORED_WARNING_RE =
   /^The logLevel given to .+ was ignored as you also gave logger$/;
+const SLACK_SOCKET_DISCONNECT_MESSAGE_RE = /^Received "disconnect" \(.*\) message/;
 
 export type SlackBoltResolvedExports = {
   App: SlackAppConstructor;
@@ -256,6 +257,12 @@ function isSlackSocketSelfInflictedLoggerWarning(args: readonly unknown[]) {
   return typeof args[0] === "string" && SLACK_SOCKET_LOG_LEVEL_IGNORED_WARNING_RE.test(args[0]);
 }
 
+// Slack asks clients to reconnect with a typed disconnect message; the SDK only
+// reports its reason at debug level, which would otherwise hide why sockets cycle.
+function isSlackSocketDisconnectMessage(args: readonly unknown[]) {
+  return typeof args[0] === "string" && SLACK_SOCKET_DISCONNECT_MESSAGE_RE.test(args[0]);
+}
+
 function formatSlackSdkLogArgs(args: readonly unknown[]) {
   return args
     .map((arg) => formatUnknownError(arg, ""))
@@ -265,10 +272,12 @@ function formatSlackSdkLogArgs(args: readonly unknown[]) {
 
 function createSlackSocketModeLogger(
   sink: Pick<typeof console, "debug" | "info" | "warn" | "error"> = console,
+  accountId?: string,
 ): SlackSocketModeLogger {
   let level = "info" as SlackSdkLogLevel;
   let name = "socket-mode";
   const prefix = () => `socket-mode:${name}`;
+  const accountLabel = accountId ? `[account ${accountId}]` : undefined;
   let lastMessage: string | undefined;
   const remember = (args: readonly unknown[]) => {
     const message = formatSlackSdkLogArgs([prefix(), ...args]);
@@ -277,7 +286,11 @@ function createSlackSocketModeLogger(
     }
   };
   return {
-    debug: () => {},
+    debug: (...args: unknown[]) => {
+      if (isSlackSocketDisconnectMessage(args)) {
+        sink.info(prefix(), ...(accountLabel ? [accountLabel] : []), ...args);
+      }
+    },
     info: () => {},
     warn: (...args: unknown[]) => {
       if (
@@ -342,8 +355,9 @@ export function createSlackBoltApp(params: {
   dispatcher?: SlackSocketModeReceiverOptions["dispatcher"];
   wrapReceiver?: (receiver: SlackReceiver) => SlackReceiver;
   onContextIdentity?: (identity: SlackContextIdentity) => void | Promise<void>;
+  accountId?: string;
 }) {
-  const socketModeLogger = createSlackSocketModeLogger();
+  const socketModeLogger = createSlackSocketModeLogger(console, params.accountId);
   const socketModeReceiverOptions: SlackSocketModeReceiverOptions = {
     appToken: params.appToken ?? "",
     autoReconnectEnabled: true,

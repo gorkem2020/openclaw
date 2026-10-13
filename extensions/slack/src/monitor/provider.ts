@@ -306,6 +306,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   const monitorContextRef: { current?: SlackMonitorContext } = {};
   const { app, receiver, socketModeLogger } = createSlackBoltApp({
     interop: await getSlackBoltInterop(),
+    accountId: account.accountId,
     slackMode,
     token,
     appToken: slackMode === "socket" ? (appToken ?? undefined) : undefined,
