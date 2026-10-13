@@ -14,6 +14,7 @@ import type {
   SqliteSessionReclamationDiagnostics,
   SqliteSessionWriteDiagnostics,
 } from "./session-accessor.sqlite-contract.js";
+import { SqliteReclamationInputsChangedError } from "./session-accessor.sqlite-reclamation-worker-diagnostics.js";
 import { runExclusiveSqliteSessionWrite } from "./session-accessor.sqlite-scope.js";
 import { drainSessionStoreWriterQueuesForTest } from "./store-writer-state.test-support.js";
 
@@ -409,4 +410,45 @@ test("a queued writer rejected by cleanup never runs after release", async () =>
     }
     expect(run).not.toHaveBeenCalled();
   });
+});
+
+test("logs a write refused for superseded maintenance inputs at debug, not as a failure", async () => {
+  await withOpenClawTestState(
+    { scenario: "minimal", env: { OPENCLAW_TEST_FILE_LOG: "1" } },
+    async (state) => {
+      const logPath = state.path("sqlite-write-superseded.log");
+      await fs.writeFile(logPath, "");
+      logging.setLoggerOverride({ level: "debug", file: logPath });
+      const superseded = new SqliteReclamationInputsChangedError(
+        "SQLite automatic maintenance inputs changed before commit",
+      );
+      try {
+        await expect(
+          runExclusiveSqliteSessionWrite(
+            { agentId: "main", env: state.env },
+            async () => {
+              throw superseded;
+            },
+            "session.reclamation.retain",
+          ),
+        ).rejects.toBe(superseded);
+        await logging.flushLogger();
+        const writerRecords = (await fs.readFile(logPath, "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as Record<string, unknown>)
+          .filter((record) => String(record["1"]).startsWith("SQLite session write"))
+          .map((record) => {
+            const meta = record._meta as { logLevelName?: string } | undefined;
+            return [record["1"], meta?.logLevelName];
+          });
+        expect(writerRecords).toEqual([
+          ["SQLite session write superseded by newer inputs", "DEBUG"],
+        ]);
+      } finally {
+        await logging.flushLogger();
+        logging.resetLogger();
+      }
+    },
+  );
 });

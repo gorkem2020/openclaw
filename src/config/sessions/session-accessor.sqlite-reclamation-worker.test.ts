@@ -251,6 +251,7 @@ test("reschedules maintenance superseded by a write during Worker planning witho
         );
         expect(records).not.toContainEqual(logged("SQLite reclamation Worker failed"));
         expect(records).not.toContainEqual(logged("SQLite automatic session maintenance failed"));
+        expect(records).not.toContainEqual(logged("SQLite session write failed"));
         const supersededLevels = records
           .filter((record) => JSON.stringify(record).includes("superseded by newer inputs"))
           .map((record) => {
@@ -264,6 +265,83 @@ test("reschedules maintenance superseded by a write during Worker planning witho
         expect(plans).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(1_000);
         expect(plans).toHaveBeenCalledTimes(2);
+        await expect(runs[1]).resolves.toMatchObject({ kind: "maintenance-plan" });
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        await closeOpenClawAgentDatabasesAsync(state.stateDir);
+        await flushLogger();
+        setLoggerOverride(null);
+      }
+    },
+  );
+});
+
+test("reschedules maintenance superseded before its reclamation retains the handle without a failed write", async () => {
+  await withOpenClawTestState(
+    { scenario: "minimal", env: { OPENCLAW_TEST_FILE_LOG: "1" } },
+    async (state) => {
+      const sessionKey = "agent:main:synthetic-retain-race";
+      const scope = { agentId: "main", env: state.env, sessionKey, sessionId: "retain-race" };
+      ensureSessionEntrySync(scope, { sessionId: scope.sessionId, updatedAt: Date.now() });
+      const database = openOpenClawAgentDatabase(scope);
+      const request = {
+        activeSessionKey: sessionKey,
+        archiveDirectory: state.path("archives"),
+        maintenanceConfig: { ...resolveMaintenanceConfigFromInput(), mode: "enforce" as const },
+        scope: { agentId: scope.agentId, env: state.env, path: database.path },
+        storePath: database.path,
+      };
+      const file = state.path("retain-race.log");
+      await fs.writeFile(file, "");
+      setLoggerOverride({ level: "debug", file });
+      const runs: Promise<unknown>[] = [];
+      const firstRun = createDeferredCore();
+      const run = reclamation.runSqliteSessionReclamation;
+      vi.spyOn(reclamation, "runSqliteSessionReclamation").mockImplementation((params) => {
+        if (runs.length === 0) {
+          // An ordinary write lands after planning starts, before the reclamation retains its handle.
+          runOpenClawAgentWriteTransaction((owner) => {
+            writeSessionEntry(owner, sessionKey, {
+              sessionId: scope.sessionId,
+              updatedAt: Date.now(),
+              label: "concurrent-write",
+            });
+          }, scope);
+          kickSessionEntryMaintenanceAfterWrite(request);
+        }
+        const operation = run(params);
+        runs.push(operation);
+        firstRun.resolve();
+        return operation;
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        kickSessionEntryMaintenanceAfterWrite(request);
+        await firstRun.promise;
+        await expect(runs[0]).rejects.toThrow(SqliteReclamationInputsChangedError);
+        await flushLogger();
+        const records = (await fs.readFile(file, "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const writer = records
+          .filter((record) => String(record["1"]).startsWith("SQLite session write"))
+          .map((record) => {
+            const meta = record._meta as { logLevelName?: string } | undefined;
+            const details = record["2"] as { operation?: string } | undefined;
+            return [record["1"], meta?.logLevelName, details?.operation];
+          });
+        expect(writer).toEqual([
+          [
+            "SQLite session write superseded by newer inputs",
+            "DEBUG",
+            "session.reclamation.retain",
+          ],
+        ]);
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(runs).toHaveLength(2);
         await expect(runs[1]).resolves.toMatchObject({ kind: "maintenance-plan" });
       } finally {
         vi.useRealTimers();

@@ -41,6 +41,7 @@ import type {
   SqliteSessionDatabaseAdmissionDiagnostics,
   SqliteSessionWriteDiagnostics,
 } from "./session-accessor.sqlite-contract.js";
+import { SqliteReclamationInputsChangedError } from "./session-accessor.sqlite-reclamation-worker-diagnostics.js";
 import type { SqliteSessionWriteOperation } from "./session-accessor.sqlite-write-operation.js";
 import {
   prepareSqliteTargetFromSessionStorePath,
@@ -294,13 +295,20 @@ export async function runExclusiveSqliteSessionWrite<T>(
   } catch (error) {
     outcome = "error";
     completedAt = performance.now();
-    getChildLogger({ subsystem: "session-sqlite" }).warn("SQLite session write failed", {
-      ...logFields(completedAt),
-      error: truncateUtf16Safe(
-        formatErrorMessageWithCode(error),
-        SQLITE_SESSION_WRITE_ERROR_MAX_CHARS,
-      ),
-    });
+    // A commit guard saw newer inputs and its caller owns the retry, so the write did not fail.
+    const superseded = error instanceof SqliteReclamationInputsChangedError;
+    getChildLogger({ subsystem: "session-sqlite" })[superseded ? "debug" : "warn"](
+      superseded
+        ? "SQLite session write superseded by newer inputs"
+        : "SQLite session write failed",
+      {
+        ...logFields(completedAt),
+        error: truncateUtf16Safe(
+          formatErrorMessageWithCode(error),
+          SQLITE_SESSION_WRITE_ERROR_MAX_CHARS,
+        ),
+      },
+    );
     throw error;
   } finally {
     if (sessionWriteDiagnostics.hasSubscribers) {

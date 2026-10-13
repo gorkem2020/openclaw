@@ -278,18 +278,10 @@ async function runPendingMaintenance(
       assertCurrent();
     }
     if (operation && result.kind === "maintenance-preservation-required") {
-      const superseded = await runExclusiveSqliteSessionWrite(
+      await runExclusiveSqliteSessionWrite(
         owner.scope,
         async () => {
-          try {
-            assertInputsCurrent();
-          } catch (error) {
-            // Returned, not thrown: the writer queue would log a superseded plan as a failed write.
-            if (error instanceof SqliteReclamationInputsChangedError) {
-              return error;
-            }
-            throw error;
-          }
+          assertInputsCurrent();
           // The in-process transaction also invalidates facts on rollback. Replan
           // from current owner state only after the explicit preservation rollback.
           ageCapture = captureSessionEntryMaintenanceAgeFact(
@@ -300,13 +292,9 @@ async function runPendingMaintenance(
           operation.input.preservation = captureSessionMaintenancePreservation(
             operation.input.storePath,
           );
-          return undefined;
         },
         "session.maintenance.plan",
       );
-      if (superseded) {
-        throw superseded;
-      }
       result = await runPlanning();
     }
     if (result.kind !== "maintenance-plan") {
