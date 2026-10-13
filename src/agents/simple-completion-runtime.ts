@@ -495,6 +495,7 @@ async function acquirePreparedSimpleCompletionRuntime(
       agentDir,
       workspaceDir: requestedWorkspaceDir,
       loadRuntimePlugins: true,
+      runtimePluginPurpose: "isolated-completion",
       runtimePluginSelections: runtimePluginSelections.map((selection) => ({
         ...selection,
         agentId,

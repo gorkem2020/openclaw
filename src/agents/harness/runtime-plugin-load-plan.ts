@@ -41,7 +41,7 @@ export type AgentHarnessPluginSelection = {
   agentId?: string;
 };
 
-export type RuntimePluginLoadPurpose = "agent" | "model-catalog";
+export type RuntimePluginLoadPurpose = "agent" | "model-catalog" | "isolated-completion";
 
 function dedupePluginIds(values: readonly string[]): string[] {
   const result: string[] = [];
@@ -330,7 +330,7 @@ export function resolveAgentRuntimePluginLoadPlan(params: {
   purpose?: RuntimePluginLoadPurpose;
 }): { config?: OpenClawConfig; pluginIds?: string[] } {
   let config = params.config;
-  const includeAgentOwners = params.purpose !== "model-catalog";
+  const includeAgentOwners = params.purpose === undefined || params.purpose === "agent";
   const memoryPluginIds = includeAgentOwners
     ? resolveSelectedMemoryPluginIds({
         config: params.config,
@@ -361,7 +361,7 @@ export function resolveAgentRuntimePluginLoadPlan(params: {
       }
     }
   }
-  for (const selection of includeAgentOwners ? params.selections : []) {
+  for (const selection of params.purpose !== "model-catalog" ? params.selections : []) {
     const runtime = resolveSelectedAgentHarnessRuntime(selection, config);
     const providerOwnerPluginIds = resolveSelectedProviderOwnerPluginIds({
       provider: selection.provider,

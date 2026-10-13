@@ -527,6 +527,28 @@ describe("harness runtime plugins", () => {
     expect(plan.config?.plugins?.entries?.openai).toEqual({ enabled: true });
   });
 
+  it.each([
+    { purpose: undefined, expected: ["custom-context-engine", "openai"] },
+    { purpose: "isolated-completion" as const, expected: ["openai"] },
+  ])("keeps selected provider owners for load purpose $purpose", ({ purpose, expected }) => {
+    mocks.resolveOwningPluginIdsForProvider.mockReturnValueOnce(["openai"]);
+    mocks.resolveActivatableProviderOwnerPluginIds.mockReturnValueOnce(["openai"]);
+    const plan = resolveAgentRuntimePluginLoadPlan({
+      metadataSnapshot: createMemoryPlanMetadataSnapshot(),
+      config: {
+        plugins: {
+          allow: ["openai"],
+          slots: { memory: "none", contextEngine: "custom-context-engine" },
+        },
+      },
+      workspaceDir: "/tmp/workspace",
+      selections: [{ provider: "openai", modelId: "gpt-5.5", runtime: "openclaw" }],
+      ...(purpose ? { purpose } : {}),
+    });
+
+    expect(plan.pluginIds).toEqual(expected);
+  });
+
   it("scopes cold metadata to selected runtime candidates from the installed index", () => {
     const scope = createAgentRuntimeMetadataPluginIdScope({
       config: { plugins: { slots: { memory: "none" } } },

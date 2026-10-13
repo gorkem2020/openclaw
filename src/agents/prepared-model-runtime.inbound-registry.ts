@@ -48,6 +48,7 @@ export function preparedModelRuntimeWorkspaceFactsKey(input: PreparedModelRuntim
     env: hashRuntimeConfigValue(input.env ?? process.env),
     readOnly: input.readOnly === true,
     loadRuntimePlugins: input.loadRuntimePlugins === true,
+    runtimePluginPurpose: input.runtimePluginPurpose,
     workspaceDir: input.workspaceDir,
     allowGatewaySubagentBinding: input.allowGatewaySubagentBinding === true,
     // Normalization already resolves each model to its runtime. The workspace
@@ -161,9 +162,10 @@ export function prepareWorkspacePluginRegistries(
     | typeof loadAgentRuntimePluginRegistryHandle = loadAgentRuntimePluginRegistryHandle,
   purpose?: RuntimePluginLoadPurpose,
 ): PreparedWorkspacePluginRegistries | Promise<PreparedWorkspacePluginRegistries> {
+  const loadPurpose = purpose ?? input.runtimePluginPurpose;
   // Passive reads stay runtime-free; catalog workers and executable probes carry explicit scope.
   if (
-    purpose !== "model-catalog" &&
+    loadPurpose !== "model-catalog" &&
     input.readOnly &&
     !input.loadRuntimePlugins &&
     !input.runtimePluginSelections
@@ -173,7 +175,7 @@ export function prepareWorkspacePluginRegistries(
   // Resolve batch facts only for a registry load; read-only and reused registries need no scan.
   let primaryRegistry: PluginRegistry | undefined;
   const inboundPluginRegistry =
-    input.readOnly || purpose === "model-catalog"
+    input.readOnly || loadPurpose === "model-catalog" || loadPurpose === "isolated-completion"
       ? undefined
       : (reusableGeneration?.inboundPluginRegistry ??
         loadInboundRegistry?.(
@@ -193,10 +195,10 @@ export function prepareWorkspacePluginRegistries(
   primaryRegistry ??= reusableGeneration?.mediaCapabilityProviderSource?.registry ?? baseRegistry;
   let loadedPrimaryRegistry: PluginRegistry | undefined;
   const runtimePluginRegistry =
-    purpose === "model-catalog" || input.runtimePluginSelections || !baseRegistry
+    loadPurpose === "model-catalog" || input.runtimePluginSelections || !baseRegistry
       ? loadRuntimeRegistry(
           {
-            ...(purpose === "model-catalog"
+            ...(loadPurpose === "model-catalog"
               ? { basePluginIds: basePluginIds ?? [] }
               : input.loadRuntimePlugins
                 ? { basePluginIds: [] }
@@ -216,7 +218,7 @@ export function prepareWorkspacePluginRegistries(
             ...(preferBuiltPluginArtifacts ? { preferBuiltPluginArtifacts: true } : {}),
             selections: input.runtimePluginSelections,
             configuredHarnessRuntimes: getConfiguredHarnessRuntimes?.(),
-            ...(purpose ? { purpose } : {}),
+            ...(loadPurpose ? { purpose: loadPurpose } : {}),
           },
           (source) => {
             loadedPrimaryRegistry =

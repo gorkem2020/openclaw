@@ -297,6 +297,36 @@ it("acquires completion runtime for the exact caller-selected model", async () =
   }
 });
 
+it("prepares prompt-only completions without agent-owned plugins", async () => {
+  const modelResolver = createOllamaModelResolver();
+  mocks.getApiKeyForModel.mockResolvedValue({
+    apiKey: "ollama-local",
+    source: "local marker",
+    mode: "api-key",
+  });
+
+  const result = await acquireSimpleCompletionModelForAgent({
+    cfg: {},
+    agentId: "main",
+    modelRef: "ollama/qwen3:0.6b",
+    modelResolver,
+  });
+
+  try {
+    expect(mocks.acquireRuntimeLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loadRuntimePlugins: true,
+        runtimePluginPurpose: "isolated-completion",
+      }),
+      expect.objectContaining({ catalogMode: "static" }),
+    );
+  } finally {
+    if (!("error" in result)) {
+      await result[Symbol.asyncDispose]();
+    }
+  }
+});
+
 it("selects an explicit agent completion model before runtime acquisition", async () => {
   const modelResolver = createOllamaModelResolver();
   mocks.getApiKeyForModel.mockResolvedValue({
