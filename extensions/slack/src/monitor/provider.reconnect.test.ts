@@ -221,6 +221,32 @@ describe("slack socket reconnect helpers", () => {
     expect(client.listenerCount("ws_message")).toBe(0);
   });
 
+  it("keeps reporting elevated connection counts on later hellos when asked", () => {
+    const client = new FakeEmitter();
+    const onSharedConnection = vi.fn();
+    const onConnectionCount = vi.fn();
+    const unregister = registerSlackSocketModeConnectionDiagnostics({
+      app: { receiver: { client } },
+      onSharedConnection,
+      onConnectionCount,
+    });
+
+    client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 9 }), false);
+    client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 1 }), false);
+    client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 10 }), false);
+    client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 6 }), true);
+    client.emit(
+      "ws_message",
+      Buffer.from(JSON.stringify({ type: "events_api", payload: { text: "hello" } })),
+      false,
+    );
+
+    expect(onSharedConnection).toHaveBeenCalledTimes(1);
+    expect(onSharedConnection).toHaveBeenCalledWith(9);
+    expect(onConnectionCount.mock.calls).toEqual([[10]]);
+    unregister();
+  });
+
   it("resolves disconnect waiter on socket disconnect event", async () => {
     const client = new FakeEmitter();
     const app = { receiver: { client } };

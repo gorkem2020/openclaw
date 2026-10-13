@@ -89,6 +89,8 @@ export function formatSlackSocketModeSharedConnectionWarning(activeConnections: 
 export function registerSlackSocketModeConnectionDiagnostics(params: {
   app: unknown;
   onSharedConnection: (activeConnections: number) => void;
+  // Later hellos keep reporting the count so connections Slack still holds stay visible.
+  onConnectionCount?: (activeConnections: number) => void;
 }): () => void {
   const emitter = getSocketEmitter(params.app);
   if (!emitter) {
@@ -96,11 +98,15 @@ export function registerSlackSocketModeConnectionDiagnostics(params: {
   }
   let hasWarned = false;
   const listener = (message: unknown, isBinary?: unknown) => {
-    if (isBinary === true || hasWarned) {
+    if (isBinary === true || (hasWarned && !params.onConnectionCount)) {
       return;
     }
     const activeConnections = resolveSlackSocketModeConnectionCount(message);
     if (activeConnections === undefined || activeConnections <= 1) {
+      return;
+    }
+    if (hasWarned) {
+      params.onConnectionCount?.(activeConnections);
       return;
     }
     hasWarned = true;

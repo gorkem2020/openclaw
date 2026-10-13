@@ -391,6 +391,11 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
           onSharedConnection: (activeConnections) => {
             runtime.log?.(warn(formatSlackSocketModeSharedConnectionWarning(activeConnections)));
           },
+          onConnectionCount: (activeConnections) => {
+            runtime.log?.(
+              `slack socket mode reconnected [account ${account.accountId}]; Slack reports ${activeConnections} active connections for this Slack app`,
+            );
+          },
         })
       : () => {};
 
