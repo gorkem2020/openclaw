@@ -189,6 +189,7 @@ export function executePluginStateCommand(
           return result;
         },
         { ...options, database },
+        { operationLabel: command.type },
       ),
     );
   } catch (error) {
