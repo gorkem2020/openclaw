@@ -19,7 +19,7 @@ vi.mock("./url.js", async (importOriginal) => ({
 
 const { registerTelegramMiniAppCommand } = await import("./command.js");
 
-function registerDashboardCommand(
+function registerControlUiCommand(
   api: Parameters<typeof registerTelegramMiniAppCommand>[0],
 ): OpenClawPluginCommandDefinition {
   const commands: OpenClawPluginCommandDefinition[] = [];
@@ -30,14 +30,14 @@ function registerDashboardCommand(
     },
     launchTickets,
   );
-  return expectDefined(commands[0], "registered Telegram dashboard command");
+  return expectDefined(commands[0], "registered Telegram Control UI command");
 }
 
 function commandContext(overrides: Partial<PluginCommandContext>): PluginCommandContext {
   return {
     channel: "telegram",
     isAuthorizedSender: true,
-    commandBody: "/dashboard",
+    commandBody: "/controlui",
     config: {},
     requestConversationBinding: async () => ({ status: "error", message: "unused" }),
     detachConversationBinding: async () => ({ removed: false }),
@@ -49,10 +49,11 @@ function commandContext(overrides: Partial<PluginCommandContext>): PluginCommand
 describe("registerTelegramMiniAppCommand", () => {
   beforeEach(() => {
     launchTickets.issue.mockClear();
+    resolveTelegramMiniAppUrls.mockClear();
   });
 
   it("returns a DM-only message for group invocations", async () => {
-    const command = registerDashboardCommand(
+    const command = registerControlUiCommand(
       createTestPluginApi({
         config: {
           channels: {
@@ -85,7 +86,7 @@ describe("registerTelegramMiniAppCommand", () => {
       controlUiUrl: "https://host.tailnet.ts.net/openclaw",
       gatewayUrl: "wss://host.tailnet.ts.net",
     });
-    const command = registerDashboardCommand(
+    const command = registerControlUiCommand(
       createTestPluginApi({
         config: {
           channels: {
@@ -108,13 +109,14 @@ describe("registerTelegramMiniAppCommand", () => {
       }),
     );
 
-    expect(result.text).toBe("Open OpenClaw dashboard.");
+    expect(command.name).toBe("controlui");
+    expect(result.text).toBe("Open OpenClaw Control UI.");
     expect(result.presentation?.blocks).toEqual([
       {
         type: "buttons",
         buttons: [
           {
-            label: "Open dashboard",
+            label: "Open Control UI",
             webApp: {
               url: "https://host.tailnet.ts.net/__openclaw_tg_miniapp/?accountId=ops#launchTicket=launch-ticket",
             },
@@ -123,5 +125,39 @@ describe("registerTelegramMiniAppCommand", () => {
       },
     ]);
     expect(launchTickets.issue).toHaveBeenCalledWith({ accountId: "ops", userId: "123" });
+  });
+
+  it("explains how to recover owner access for non-owner DM invocations", async () => {
+    const command = registerControlUiCommand(
+      createTestPluginApi({
+        config: {
+          channels: {
+            telegram: {
+              accounts: {
+                ops: { allowFrom: ["999"] },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await command.handler(
+      commandContext({
+        from: "telegram:123",
+        sessionKey: "telegram:direct:123",
+        senderIsOwner: false,
+        accountId: "ops",
+      }),
+    );
+
+    expect(result.text).toContain("Restricted to the bot owner.");
+    expect(result.text).toContain("numeric Telegram user ID (123)");
+    expect(result.text).toContain("allowFrom");
+    expect(result.text).toContain("commands.ownerAllowFrom");
+    expect(result.text).toContain("retry /controlui");
+    expect(result.presentation).toBeUndefined();
+    expect(resolveTelegramMiniAppUrls).not.toHaveBeenCalled();
+    expect(launchTickets.issue).not.toHaveBeenCalled();
   });
 });

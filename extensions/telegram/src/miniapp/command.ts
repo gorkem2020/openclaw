@@ -13,16 +13,16 @@ export function registerTelegramMiniAppCommand(
   api: OpenClawPluginApi,
   launchTickets: TelegramMiniAppLaunchTickets,
 ): void {
-  api.registerCommand(createTelegramMiniAppDashboardCommand(api, launchTickets));
+  api.registerCommand(createTelegramMiniAppControlUiCommand(api, launchTickets));
 }
 
-function createTelegramMiniAppDashboardCommand(
+function createTelegramMiniAppControlUiCommand(
   api: OpenClawPluginApi,
   launchTickets: TelegramMiniAppLaunchTickets,
 ): OpenClawPluginCommandDefinition {
   return {
-    name: "dashboard",
-    description: "Open the OpenClaw dashboard",
+    name: "controlui",
+    description: "Open the OpenClaw Control UI",
     channels: ["telegram"],
     requireAuth: true,
     exposeSenderIsOwner: true,
@@ -34,7 +34,12 @@ function createTelegramMiniAppDashboardCommand(
       const accountId = normalizeAccountId(ctx.accountId ?? DEFAULT_ACCOUNT_ID);
       const userId = resolveTelegramDirectUserId(ctx);
       if (!(await isTelegramMiniAppOwner({ cfg, accountId, userId }))) {
-        return { text: "Restricted to the bot owner." };
+        return {
+          text:
+            "Restricted to the bot owner. Ask your OpenClaw administrator to add your numeric " +
+            `Telegram user ID${userId ? ` (${userId})` : ""} to this bot account's allowFrom or ` +
+            "commands.ownerAllowFrom, then retry /controlui. Wildcards and usernames do not grant Control UI access.",
+        };
       }
       let pageUrl: URL;
       try {
@@ -47,12 +52,12 @@ function createTelegramMiniAppDashboardCommand(
         launchTicket: launchTickets.issue({ accountId, userId }),
       }).toString();
       return {
-        text: "Open OpenClaw dashboard.",
+        text: "Open OpenClaw Control UI.",
         presentation: {
           blocks: [
             {
               type: "buttons",
-              buttons: [{ label: "Open dashboard", webApp: { url: pageUrl.toString() } }],
+              buttons: [{ label: "Open Control UI", webApp: { url: pageUrl.toString() } }],
             },
           ],
         },

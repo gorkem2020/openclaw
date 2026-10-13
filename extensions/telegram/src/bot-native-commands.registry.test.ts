@@ -6,7 +6,10 @@ import {
 // Telegram tests cover bot native commands.registry plugin behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { clearPluginCommands, registerPluginCommand } from "openclaw/plugin-sdk/plugin-runtime";
+import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerTelegramMiniApp } from "../miniapp-api.js";
+import { TELEGRAM_MINIAPP_URL_ERROR } from "./miniapp/url.js";
 
 let registerTelegramNativeCommands: typeof import("./bot-native-commands.js").registerTelegramNativeCommands;
 let createCommandBot: typeof import("./bot-native-commands.menu-test-support.js").createCommandBot;
@@ -207,6 +210,46 @@ describe("registerTelegramNativeCommands real plugin registry", () => {
     expectLastDeliveredReplyText("paired:now");
     expect(sendMessage).not.toHaveBeenCalledWith(123, "Command not found.");
   });
+
+  it.each([true, false])(
+    "registers the bundled Control UI launcher beside the built-in dashboard command (native=%s)",
+    async (nativeEnabled) => {
+      const cfg = { channels: { telegram: { allowFrom: ["200"] } } } satisfies OpenClawConfig;
+      registerTelegramMiniApp(
+        createTestPluginApi({
+          config: cfg,
+          registerCommand: (command) => {
+            expect(registerPluginCommand("telegram", command)).toEqual({ ok: true });
+          },
+        }),
+      );
+      const { bot, commandHandlers, sendMessage, setMyCommands } = createCommandBot();
+      const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+      registerTelegramNativeCommands({
+        ...createNativeCommandTestParams(cfg, { runtime }),
+        bot,
+        nativeEnabled,
+        opts: { token: "token", allowFrom: ["200"] },
+      });
+
+      expect(runtime.error).not.toHaveBeenCalled();
+      if (nativeEnabled) {
+        const registered = await waitForRegisteredCommands(setMyCommands);
+        expect(registered.filter(({ command }) => command === "dashboard")).toHaveLength(1);
+        expectRegisteredCommand(registered, {
+          command: "dashboard",
+          description: "Create or update this session's dashboard.",
+        });
+        expectRegisteredCommand(registered, {
+          command: "controlui",
+          description: "Open the OpenClaw Control UI",
+        });
+      }
+      await requireCommandHandler(commandHandlers, "controlui")(createPrivateCommandContext());
+      expect(sendMessage).not.toHaveBeenCalled();
+      expectLastDeliveredReplyText(TELEGRAM_MINIAPP_URL_ERROR);
+    },
+  );
 
   it.each([
     ["transformed-first", ["foo-bar", "foo_bar"]],

@@ -268,7 +268,7 @@ describe("registerTelegramMiniAppRoutes", () => {
     });
 
     expect(replay.statusCode).toBe(401);
-    expect(replay.body).toBe("This link expired. Reopen the dashboard from your bot chat.");
+    expect(replay.body).toBe("This link expired. Run /controlui again in your bot chat.");
     expect(issueDeviceBootstrapToken).toHaveBeenCalledTimes(1);
   });
 
@@ -338,7 +338,7 @@ describe("registerTelegramMiniAppRoutes", () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect(res.body).toBe("This link expired. Reopen the dashboard from your bot chat.");
+    expect(res.body).toBe("This link expired. Run /controlui again in your bot chat.");
     expect(issueDeviceBootstrapToken).not.toHaveBeenCalled();
   });
 
@@ -394,7 +394,7 @@ describe("registerTelegramMiniAppRoutes", () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect(res.body).toBe("This link expired. Reopen the dashboard from your bot chat.");
+    expect(res.body).toBe("This link expired. Run /controlui again in your bot chat.");
     expect(issueDeviceBootstrapToken).not.toHaveBeenCalled();
   });
 
