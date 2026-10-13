@@ -215,6 +215,11 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
       }
     }
     const executeCommand = async (command: unknown) => {
+      // Refuse before acquiring: a throw here would escape the release below.
+      const backend = actors.get(request.actor);
+      if (!backend) {
+        throw new Error("SQLite worker actor is closed");
+      }
       let coordinator: ReturnType<typeof acquireStateDatabaseCoordinator> | undefined;
       if (lifecyclePreparation) {
         const context = stateContexts.get(request.actor);
@@ -237,10 +242,6 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
         if (prepared.admission) {
           operationAdmission = { actor: request.actor, context: { port: prepared.admission } };
         }
-      }
-      const backend = actors.get(request.actor);
-      if (!backend) {
-        throw new Error("SQLite worker actor is closed");
       }
       preparedGatewayActor = undefined;
       const assertSettled = (failure?: { error: unknown }) => {
