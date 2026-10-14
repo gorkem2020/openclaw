@@ -40,6 +40,7 @@ import {
   assertEnterpriseSlackPolicyConfig,
   resolveSlackIdentityHealth,
   resolveSlackInstallationIdentity,
+  resolveSlackRuntimeIdentity,
   type SlackAuthTestIdentity,
   type SlackInstallationIdentity,
 } from "./enterprise-install.js";
@@ -97,29 +98,6 @@ async function getSlackBoltInterop(): Promise<SlackBoltResolvedExports> {
 }
 
 const loadSlackRelaySource = createLazyRuntimeModule(() => import("./relay-source.js"));
-
-type SlackRuntimeIdentity = {
-  botUserId: string;
-  botId?: string;
-};
-
-function resolveSlackRuntimeIdentity(params: {
-  identity: "bot" | "user";
-  botUserId?: unknown;
-  botId?: unknown;
-}): SlackRuntimeIdentity | undefined {
-  // User identity has no bot_id; its human id is both the mention target and self-send dedupe
-  // source. Bot identity stays bot_id-gated so token mismatches fail closed.
-  const botUserId = normalizeOptionalString(params.botUserId);
-  const botId = normalizeOptionalString(params.botId);
-  if (!botUserId || (params.identity === "bot" && !botId)) {
-    return undefined;
-  }
-  return {
-    botUserId,
-    ...(botId ? { botId } : {}),
-  };
-}
 
 function applySlackInstallationIdentity(
   ctx: SlackMonitorContext,
@@ -372,8 +350,10 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts) {
   const unregisterSocketModeConnectionDiagnostics = socketClient
     ? registerSlackSocketModeConnectionDiagnostics({
         client: socketClient,
-        accountId: account.accountId,
+        webClient: app.client,
+        account,
         log: runtime.log,
+        scheduler: opts.scheduler,
       })
     : () => {};
 

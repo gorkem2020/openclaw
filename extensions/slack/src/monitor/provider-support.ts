@@ -11,6 +11,7 @@ import type { SlackUserResolution } from "../resolve-users.js";
 import type { SlackIdentityHealth } from "./enterprise-install.js";
 import {
   resolveSlackSocketModeControlFrame,
+  takeSlackSocketPurgeRetry,
   waitForSlackSocketDisconnect,
 } from "./reconnect-policy.js";
 import { installSlackSocketModeEnvelopeGuard } from "./socket-mode-envelope.js";
@@ -39,6 +40,9 @@ const SLACK_SOCKET_FAST_RECONNECT_DELAY_MS = 1_000;
 const SLACK_SOCKET_STABLE_CONNECTION_MS = 60_000;
 const SLACK_SOCKET_REFRESH_REQUEST_TTL_MS = 120_000;
 const SLACK_SOCKET_REFRESH_REASONS = new Set(["warning", "refresh_requested"]);
+// Slack drops the connections it still counts once a purge's self-event reaches them, so the retry
+// after a refused connection need not wait out the failure backoff.
+const SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS = 2_000;
 const SLACK_SOCKET_PONG_TIMEOUT_WARNING_PREFIX = "A pong wasn't received from the server";
 const SLACK_SOCKET_PING_TIMEOUT_WARNING_PREFIX = "A ping wasn't received from the server";
 const SLACK_SOCKET_LOG_LEVEL_IGNORED_WARNING_RE =
@@ -98,6 +102,7 @@ function installSlackNativeReconnectFailureObserver(
       // Both marks describe the connection that just ended, so only its first replacement uses them.
       Reflect.set(this, SLACK_SOCKET_REFRESH_REQUESTED_AT_KEY, undefined);
       Reflect.set(this, SLACK_SOCKET_CONNECTED_AT_KEY, undefined);
+      const purgeRetry = takeSlackSocketPurgeRetry(this);
       if (!Number.isFinite(Number(Reflect.get(this, SLACK_SOCKET_CONNECTION_LOST_AT_KEY)))) {
         Reflect.set(this, SLACK_SOCKET_CONNECTION_LOST_AT_KEY, now);
       }
@@ -117,7 +122,7 @@ function installSlackNativeReconnectFailureObserver(
         `Before trying to reconnect, this client will wait for ${delayMs} milliseconds`,
       );
       return new Promise((resolve, reject) => {
-        const reconnectTimer = setTimeout(() => {
+        const reconnect = () => {
           Reflect.set(this, "reconnectionTimer", undefined);
           if (Reflect.get(this, "shuttingDown")) {
             logger?.debug?.("Client shutting down, will not attempt reconnect.");
@@ -134,10 +139,27 @@ function installSlackNativeReconnectFailureObserver(
             }
             reject(toErrorObject(error, "Non-Error rejection"));
           });
-        }, delayMs);
+        };
+        const reconnectDueAt = now + delayMs;
+        const reconnectTimer = setTimeout(reconnect, delayMs);
         // SocketModeClient.disconnect() clears this field. Keep the patched
         // scheduler on the SDK's lifecycle so a stopped app cannot reconnect.
         Reflect.set(this, "reconnectionTimer", reconnectTimer);
+        void purgeRetry?.then((sent) => {
+          if (
+            !sent ||
+            Reflect.get(this, "reconnectionTimer") !== reconnectTimer ||
+            Date.now() + SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS >= reconnectDueAt
+          ) {
+            return;
+          }
+          clearTimeout(reconnectTimer);
+          Reflect.set(
+            this,
+            "reconnectionTimer",
+            setTimeout(reconnect, SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS),
+          );
+        });
       });
     },
   );

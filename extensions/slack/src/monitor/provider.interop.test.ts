@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createTestPluginServiceScheduler } from "openclaw/plugin-sdk/plugin-test-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import {
@@ -32,6 +33,29 @@ async function createSocketApp(clientOptions: Record<string, unknown> = {}) {
     throw new Error("expected a Socket Mode receiver");
   }
   return { ...result, receiver: result.receiver };
+}
+
+// The provider's diagnostics clear Slack's dead registrations through the app's Web API client.
+function watchSocketConnections(
+  socketClient: Parameters<typeof registerSlackSocketModeConnectionDiagnostics>[0]["client"],
+  messages: Array<{ user?: string; ts?: string }> = [{ user: "U_BOT", ts: "1.0" }],
+  identity: "bot" | "user" = "bot",
+) {
+  const reactions = { add: vi.fn(async () => ({})), remove: vi.fn(async () => ({})) };
+  const unregister = registerSlackSocketModeConnectionDiagnostics({
+    client: socketClient,
+    webClient: {
+      auth: { test: async () => ({ user_id: "U_BOT", bot_id: "B_BOT" }) },
+      conversations: {
+        list: async () => ({ channels: [{ id: "D_HUMAN" }] }),
+        history: async () => ({ messages }),
+      },
+      reactions,
+    },
+    account: { accountId: "acct-one", identity },
+    scheduler: createTestPluginServiceScheduler(),
+  });
+  return { reactions, unregister };
 }
 
 async function createSocketServer() {
@@ -324,6 +348,8 @@ describe("createSlackBoltApp", () => {
         await vi.advanceTimersByTimeAsync(ms);
         return client.start.mock.calls.length - before;
       },
+      watchConnections: (messages?: Array<{ user?: string; ts?: string }>) =>
+        watchSocketConnections(client, messages),
     };
   }
 
@@ -416,7 +442,59 @@ describe("createSlackBoltApp", () => {
     }
   });
 
-  it("cancels a pending native reconnect when the app is stopped and started again", async () => {
+  it("retries two seconds after a refused connection's purge sends its self-event", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createReconnectObservedApp();
+      socket.watchConnections();
+
+      socket.frame({ type: "disconnect", reason: "too_many_websockets" });
+      socket.lose();
+      expect(await socket.startsAfter(1_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+
+      socket.frame({ type: "disconnect", reason: "too_many_websockets" });
+      socket.lose();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the backoff after a refusal when the purge sends no self-event", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createReconnectObservedApp();
+      socket.watchConnections([{ user: "U_HUMAN", ts: "3.0" }]);
+
+      socket.frame({ type: "disconnect", reason: "too_many_websockets" });
+      socket.lose();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not postpone a reconnect that is due before the purge retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createReconnectObservedApp();
+      socket.watchConnections();
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      socket.frame({ type: "disconnect", reason: "too_many_websockets" });
+      socket.lose();
+      expect(await socket.startsAfter(1_000)).toBe(1);
+      expect(await socket.startsAfter(5_000)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending native reconnect and its purge retry when the app restarts", async () => {
     vi.useFakeTimers();
     try {
       const { app, receiver } = await createSocketApp();
@@ -429,6 +507,12 @@ describe("createSlackBoltApp", () => {
       if (typeof delayReconnectAttempt !== "function") {
         throw new Error("expected a native reconnect scheduler");
       }
+      watchSocketConnections(client);
+      client.emit(
+        "ws_message",
+        JSON.stringify({ type: "disconnect", reason: "too_many_websockets" }),
+        false,
+      );
 
       void delayReconnectAttempt.call(client, start);
       await gracefulStopSlackApp(app, client);
@@ -599,8 +683,9 @@ describe("slack socket reconnect helpers", () => {
     const log = vi.fn();
     const unregister = registerSlackSocketModeConnectionDiagnostics({
       client,
-      accountId: "acct-one",
+      account: { accountId: "acct-one", identity: "bot" },
       log,
+      scheduler: createTestPluginServiceScheduler(),
     });
 
     const emit = (payload: object, binary = false) =>
@@ -627,8 +712,9 @@ describe("slack socket reconnect helpers", () => {
     const log = vi.fn();
     registerSlackSocketModeConnectionDiagnostics({
       client,
-      accountId: "acct-one",
+      account: { accountId: "acct-one", identity: "bot" },
       log,
+      scheduler: createTestPluginServiceScheduler(),
     });
     const hello = (count: number) =>
       client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: count }), false);
@@ -641,6 +727,49 @@ describe("slack socket reconnect helpers", () => {
     expect(log).toHaveBeenLastCalledWith(
       "[acct-one] slack socket mode reconnected; Slack reports 9 active connections for this Slack app",
     );
+  });
+
+  it("clears Slack's dead registrations for bot identities only", async () => {
+    vi.useFakeTimers();
+    try {
+      const register = (identity: "bot" | "user") => {
+        const socketClient = new EventEmitter();
+        const { reactions } = watchSocketConnections(socketClient, undefined, identity);
+        const frame = (payload: object) =>
+          socketClient.emit("ws_message", JSON.stringify(payload), false);
+        return { frame, reactions };
+      };
+      const user = register("user");
+      const bot = register("bot");
+
+      user.frame({ type: "hello", num_connections: 3 });
+      bot.frame({ type: "hello", num_connections: 3 });
+      await vi.advanceTimersByTimeAsync(60_000);
+      user.frame({ type: "disconnect", reason: "too_many_websockets" });
+      bot.frame({ type: "disconnect", reason: "too_many_websockets" });
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(user.reactions.add).not.toHaveBeenCalled();
+      expect(bot.reactions.add).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending registration purge when the diagnostics are unregistered", async () => {
+    vi.useFakeTimers();
+    try {
+      const socketClient = new EventEmitter();
+      const { reactions, unregister } = watchSocketConnections(socketClient);
+
+      socketClient.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 3 }), false);
+      unregister();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(reactions.add).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("installs the disconnect waiter before socket start completes", async () => {

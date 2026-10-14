@@ -271,6 +271,29 @@ export function resolveSlackInstallationIdentity(params: {
   };
 }
 
+type SlackRuntimeIdentity = {
+  botUserId: string;
+  botId?: string;
+};
+
+export function resolveSlackRuntimeIdentity(params: {
+  identity: "bot" | "user";
+  botUserId?: unknown;
+  botId?: unknown;
+}): SlackRuntimeIdentity | undefined {
+  // User identity has no bot_id; its human id is both the mention target and self-send dedupe
+  // source. Bot identity stays bot_id-gated so token mismatches fail closed.
+  const botUserId = normalizeOptionalString(params.botUserId);
+  const botId = normalizeOptionalString(params.botId);
+  if (!botUserId || (params.identity === "bot" && !botId)) {
+    return undefined;
+  }
+  return {
+    botUserId,
+    ...(botId ? { botId } : {}),
+  };
+}
+
 export function resolveSlackIdentityHealth(params: {
   installationIdentity: SlackInstallationIdentity;
   botUserId: string;
