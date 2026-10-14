@@ -288,6 +288,134 @@ describe("createSlackBoltApp", () => {
     ]);
   });
 
+  function createReconnectObservedApp(accountId?: string) {
+    class FakeSocketModeClient extends EventEmitter {
+      clientPingTimeoutMS = 15_000;
+      numOfConsecutiveReconnectionFailures = 0;
+      logger = { debug: () => undefined };
+      shuttingDown = false;
+      send = async () => {};
+      start = vi.fn(async () => {});
+
+      delayReconnectAttempt(callback: (this: FakeSocketModeClient) => Promise<unknown>) {
+        return Promise.resolve(callback.call(this));
+      }
+    }
+    class FakeObservedSocketModeReceiver {
+      client = new FakeSocketModeClient();
+    }
+    const { receiver } = createSlackBoltApp({
+      ...socketOptions,
+      interop: { ...fakeInterop, SocketModeReceiver: FakeObservedSocketModeReceiver as never },
+      ...(accountId ? { accountId } : {}),
+    });
+    const client = (receiver as unknown as FakeObservedSocketModeReceiver).client;
+    const frame = (payload: object) => client.emit("ws_message", JSON.stringify(payload), false);
+    return {
+      hello: () => frame({ type: "hello", num_connections: 1 }),
+      frame,
+      // The SDK resets the failure count once apps.connections.open succeeds, before every socket.
+      lose: () => {
+        client.numOfConsecutiveReconnectionFailures = 0;
+        void client.delayReconnectAttempt(client.start);
+      },
+      startsAfter: async (ms: number) => {
+        const before = client.start.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(ms);
+        return client.start.mock.calls.length - before;
+      },
+    };
+  }
+
+  it("replaces a refreshed or long-lived socket after one second and backs off otherwise", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createReconnectObservedApp();
+
+      socket.frame({ type: "disconnect", reason: "warning" });
+      socket.lose();
+      expect(await socket.startsAfter(999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+
+      socket.frame({ type: "disconnect", reason: "too_many_websockets" });
+      socket.lose();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+
+      socket.frame({ type: "disconnect", reason: "refresh_requested" });
+      await vi.advanceTimersByTimeAsync(120_000);
+      socket.lose();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+      socket.lose();
+      expect(await socket.startsAfter(999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(59_999);
+      socket.lose();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs off a failed replacement and reports the outage once Slack says hello", async () => {
+    vi.useFakeTimers();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const socket = createReconnectObservedApp("acct-one");
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      socket.lose();
+      expect(await socket.startsAfter(1_000)).toBe(1);
+      socket.lose();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+      await vi.advanceTimersByTimeAsync(400);
+      socket.hello();
+      socket.hello();
+
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith(
+        "[acct-one]",
+        "slack socket mode reconnected after 16400 ms",
+      );
+    } finally {
+      info.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts a refresh outage from Slack's disconnect request, not from the socket close", async () => {
+    vi.useFakeTimers();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const socket = createReconnectObservedApp("acct-one");
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      socket.frame({ type: "disconnect", reason: "warning" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      socket.lose();
+      expect(await socket.startsAfter(1_000)).toBe(1);
+      socket.hello();
+
+      expect(info).toHaveBeenCalledWith(
+        "[acct-one]",
+        "slack socket mode reconnected after 11000 ms",
+      );
+    } finally {
+      info.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("cancels a pending native reconnect when the app is stopped and started again", async () => {
     vi.useFakeTimers();
     try {
