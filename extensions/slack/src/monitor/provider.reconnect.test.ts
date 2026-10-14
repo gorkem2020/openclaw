@@ -247,6 +247,43 @@ describe("slack socket reconnect helpers", () => {
     unregister();
   });
 
+  it("reports Slack's too_many_websockets refusals and no other disconnect reason", () => {
+    const client = new FakeEmitter();
+    const onSharedConnection = vi.fn();
+    const onCapacityRefusal = vi.fn();
+    const unregister = registerSlackSocketModeConnectionDiagnostics({
+      app: { receiver: { client } },
+      onSharedConnection,
+      onCapacityRefusal,
+    });
+
+    client.emit(
+      "ws_message",
+      JSON.stringify({ type: "disconnect", reason: "warning", debug_info: { host: "h" } }),
+      false,
+    );
+    client.emit(
+      "ws_message",
+      Buffer.from(JSON.stringify({ type: "disconnect", reason: "too_many_websockets" })),
+      false,
+    );
+    client.emit(
+      "ws_message",
+      JSON.stringify({ type: "events_api", payload: { text: "disconnect too_many_websockets" } }),
+      false,
+    );
+    client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 3 }), false);
+    client.emit(
+      "ws_message",
+      JSON.stringify({ type: "disconnect", reason: "too_many_websockets" }),
+      false,
+    );
+
+    expect(onCapacityRefusal).toHaveBeenCalledTimes(2);
+    expect(onSharedConnection.mock.calls).toEqual([[3]]);
+    unregister();
+  });
+
   it("resolves disconnect waiter on socket disconnect event", async () => {
     const client = new FakeEmitter();
     const app = { receiver: { client } };

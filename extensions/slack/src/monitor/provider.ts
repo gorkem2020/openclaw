@@ -72,6 +72,7 @@ import {
 import { resolveSlackMonitorPolicy } from "./runtime-policy.js";
 import { setSlackDefaultSendIdentity } from "./send.runtime.js";
 import { registerSlackMonitorSlashCommands } from "./slash.js";
+import { createSlackSocketRegistrationPurge } from "./socket-registration-purge.js";
 import type { MonitorSlackOpts } from "./types.js";
 
 let slackBoltInterop: SlackBoltResolvedExports | undefined;
@@ -384,17 +385,23 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
         })
       : null;
   let unregisterHttpHandler: (() => void) | null = null;
+  let socketRegistrationPurge: ReturnType<typeof createSlackSocketRegistrationPurge> | undefined;
   const unregisterSocketModeConnectionDiagnostics =
     slackMode === "socket"
       ? registerSlackSocketModeConnectionDiagnostics({
           app,
           onSharedConnection: (activeConnections) => {
             runtime.log?.(warn(formatSlackSocketModeSharedConnectionWarning(activeConnections)));
+            void socketRegistrationPurge?.request("hello", activeConnections);
           },
           onConnectionCount: (activeConnections) => {
             runtime.log?.(
               `slack socket mode reconnected [account ${account.accountId}]; Slack reports ${activeConnections} active connections for this Slack app`,
             );
+            void socketRegistrationPurge?.request("hello", activeConnections);
+          },
+          onCapacityRefusal: () => {
+            void socketRegistrationPurge?.request("too_many_websockets");
           },
         })
       : () => {};
@@ -428,6 +435,14 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     }
   } catch (err) {
     authTestError = err instanceof Error ? err.message : String(err);
+  }
+  if (slackMode === "socket" && botUserId) {
+    socketRegistrationPurge = createSlackSocketRegistrationPurge({
+      client: app.client,
+      botUserId,
+      accountId: account.accountId,
+      ...(runtime.log ? { log: runtime.log } : {}),
+    });
   }
   const assertSlackInstallationPolicy = (identity: SlackInstallationIdentity) => {
     if (identity.kind === "degraded") {

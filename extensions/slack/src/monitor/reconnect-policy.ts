@@ -22,6 +22,12 @@ type EmitterLike = {
 const SLACK_SOCKET_SHARED_CONNECTION_DOCS_URL =
   "https://docs.slack.dev/apis/events-api/using-socket-mode#using-multiple-connections";
 const SLACK_SOCKET_HELLO_MARKER = Buffer.from('"hello"');
+const SLACK_SOCKET_DISCONNECT_MARKER = Buffer.from('"disconnect"');
+export const SLACK_SOCKET_CAPACITY_REFUSAL_REASON = "too_many_websockets";
+
+type SlackSocketModeControlFrame =
+  | { type: "hello"; numConnections: number }
+  | { type: "disconnect"; reason: string };
 
 function getSocketEmitter(app: unknown): EmitterLike | null {
   const receiver = (app as { receiver?: unknown }).receiver;
@@ -53,7 +59,9 @@ function isBufferArray(value: unknown): value is Buffer[] {
   return Array.isArray(value) && value.every((entry) => Buffer.isBuffer(entry));
 }
 
-function resolveSlackSocketModeConnectionCount(message: unknown): number | undefined {
+export function resolveSlackSocketModeControlFrame(
+  message: unknown,
+): SlackSocketModeControlFrame | undefined {
   const buffer =
     typeof message === "string"
       ? Buffer.from(message)
@@ -64,7 +72,11 @@ function resolveSlackSocketModeConnectionCount(message: unknown): number | undef
           : isBufferArray(message)
             ? Buffer.concat(message)
             : undefined;
-  if (!buffer?.includes(SLACK_SOCKET_HELLO_MARKER)) {
+  if (
+    !buffer ||
+    (!buffer.includes(SLACK_SOCKET_HELLO_MARKER) &&
+      !buffer.includes(SLACK_SOCKET_DISCONNECT_MARKER))
+  ) {
     return undefined;
   }
   let payload: unknown;
@@ -73,8 +85,19 @@ function resolveSlackSocketModeConnectionCount(message: unknown): number | undef
   } catch {
     return undefined;
   }
-  const count = isRecord(payload) && payload.type === "hello" ? payload.num_connections : undefined;
-  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+  if (payload.type === "hello") {
+    const count = payload.num_connections;
+    return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+      ? { type: "hello", numConnections: count }
+      : undefined;
+  }
+  if (payload.type === "disconnect" && typeof payload.reason === "string") {
+    return { type: "disconnect", reason: payload.reason };
+  }
+  return undefined;
 }
 
 export function formatSlackSocketModeSharedConnectionWarning(activeConnections: number): string {
@@ -91,6 +114,7 @@ export function registerSlackSocketModeConnectionDiagnostics(params: {
   onSharedConnection: (activeConnections: number) => void;
   // Later hellos keep reporting the count so connections Slack still holds stay visible.
   onConnectionCount?: (activeConnections: number) => void;
+  onCapacityRefusal?: () => void;
 }): () => void {
   const emitter = getSocketEmitter(params.app);
   if (!emitter) {
@@ -98,10 +122,20 @@ export function registerSlackSocketModeConnectionDiagnostics(params: {
   }
   let hasWarned = false;
   const listener = (message: unknown, isBinary?: unknown) => {
-    if (isBinary === true || (hasWarned && !params.onConnectionCount)) {
+    if (
+      isBinary === true ||
+      (hasWarned && !params.onConnectionCount && !params.onCapacityRefusal)
+    ) {
       return;
     }
-    const activeConnections = resolveSlackSocketModeConnectionCount(message);
+    const frame = resolveSlackSocketModeControlFrame(message);
+    if (frame?.type === "disconnect") {
+      if (frame.reason === SLACK_SOCKET_CAPACITY_REFUSAL_REASON) {
+        params.onCapacityRefusal?.();
+      }
+      return;
+    }
+    const activeConnections = frame?.numConnections;
     if (activeConnections === undefined || activeConnections <= 1) {
       return;
     }
