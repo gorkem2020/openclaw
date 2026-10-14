@@ -31,9 +31,13 @@ const OPENCLAW_SLACK_CLIENT_PING_TIMEOUT_MS = 15_000;
 const OPENCLAW_SLACK_SOCKET_START_FAILED_EVENT = "unable_to_socket_mode_start";
 const OPENCLAW_SLACK_NATIVE_RECONNECT_OBSERVER_KEY = "__openclawNativeReconnectFailureObserver";
 const OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY = "__openclawSlackRefreshRequestedAt";
-// Slack refreshes every connection about every five hours; the replacement is
-// not a failure, so it skips the failure backoff.
-const SLACK_SOCKET_REFRESH_RECONNECT_DELAY_MS = 1_000;
+const OPENCLAW_SLACK_CONNECTED_AT_KEY = "__openclawSlackConnectedAt";
+const OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY = "__openclawSlackConnectionLostAt";
+// Slack refreshes every connection about every five hours and resets some
+// without a disconnect frame; losing a connection that had been up for a while
+// is not a failure, so the replacement skips the failure backoff.
+const SLACK_SOCKET_FAST_RECONNECT_DELAY_MS = 1_000;
+const SLACK_SOCKET_STABLE_CONNECTION_MS = 60_000;
 const SLACK_SOCKET_REFRESH_REQUEST_TTL_MS = 120_000;
 const SLACK_SOCKET_REFRESH_REASONS = new Set(["warning", "refresh_requested"]);
 const SLACK_SOCKET_PONG_TIMEOUT_WARNING_PREFIX = "A pong wasn't received from the server";
@@ -102,17 +106,25 @@ function installSlackNativeReconnectFailureObserver(receiver: unknown) {
       const nextFailureCount = failureCount + 1;
       Reflect.set(this, "numOfConsecutiveReconnectionFailures", nextFailureCount);
       const pingTimeoutMs = Number(Reflect.get(this, "clientPingTimeoutMS"));
+      const now = Date.now();
       const refreshRequestedAt = Number(Reflect.get(this, OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY));
+      const connectedAt = Number(Reflect.get(this, OPENCLAW_SLACK_CONNECTED_AT_KEY));
       Reflect.set(this, OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY, undefined);
+      Reflect.set(this, OPENCLAW_SLACK_CONNECTED_AT_KEY, undefined);
+      if (!Number.isFinite(Number(Reflect.get(this, OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY)))) {
+        Reflect.set(this, OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY, now);
+      }
       const slackRequestedRefresh =
-        nextFailureCount === 1 &&
         Number.isFinite(refreshRequestedAt) &&
-        Date.now() - refreshRequestedAt < SLACK_SOCKET_REFRESH_REQUEST_TTL_MS;
-      const delayMs = slackRequestedRefresh
-        ? SLACK_SOCKET_REFRESH_RECONNECT_DELAY_MS
-        : (Number.isFinite(pingTimeoutMs) && pingTimeoutMs >= 0
-            ? pingTimeoutMs
-            : OPENCLAW_SLACK_CLIENT_PING_TIMEOUT_MS) * nextFailureCount;
+        now - refreshRequestedAt < SLACK_SOCKET_REFRESH_REQUEST_TTL_MS;
+      const stableConnectionLost =
+        Number.isFinite(connectedAt) && now - connectedAt >= SLACK_SOCKET_STABLE_CONNECTION_MS;
+      const delayMs =
+        nextFailureCount === 1 && (slackRequestedRefresh || stableConnectionLost)
+          ? SLACK_SOCKET_FAST_RECONNECT_DELAY_MS
+          : (Number.isFinite(pingTimeoutMs) && pingTimeoutMs >= 0
+              ? pingTimeoutMs
+              : OPENCLAW_SLACK_CLIENT_PING_TIMEOUT_MS) * nextFailureCount;
       const logger = Reflect.get(this, "logger") as { debug?: (message: string) => void };
       logger?.debug?.(
         `Before trying to reconnect, this client will wait for ${delayMs} milliseconds`,
@@ -144,7 +156,10 @@ function installSlackNativeReconnectFailureObserver(receiver: unknown) {
   );
 }
 
-function installSlackSocketRefreshObserver(client: unknown) {
+function installSlackSocketConnectionObserver(
+  client: unknown,
+  onReconnected?: (gapMs: number) => void,
+) {
   if (!client || typeof client !== "object") {
     return;
   }
@@ -157,7 +172,15 @@ function installSlackSocketRefreshObserver(client: unknown) {
       return;
     }
     const frame = resolveSlackSocketModeControlFrame(message);
-    if (frame?.type === "disconnect" && SLACK_SOCKET_REFRESH_REASONS.has(frame.reason)) {
+    if (frame?.type === "hello") {
+      const now = Date.now();
+      const lostAt = Number(Reflect.get(client, OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY));
+      Reflect.set(client, OPENCLAW_SLACK_CONNECTED_AT_KEY, now);
+      Reflect.set(client, OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY, undefined);
+      if (Number.isFinite(lostAt)) {
+        onReconnected?.(now - lostAt);
+      }
+    } else if (frame?.type === "disconnect" && SLACK_SOCKET_REFRESH_REASONS.has(frame.reason)) {
       Reflect.set(client, OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY, Date.now());
     }
   });
@@ -313,7 +336,7 @@ function createSlackSocketModeLogger(
   let level = "info" as SlackSdkLogLevel;
   let name = "socket-mode";
   const prefix = () => `socket-mode:${name}`;
-  const accountLabel = accountId ? `[account ${accountId}]` : undefined;
+  const accountArgs = accountId ? [`[account ${accountId}]`] : [];
   let lastMessage: string | undefined;
   const remember = (args: readonly unknown[]) => {
     const message = formatSlackSdkLogArgs([prefix(), ...args]);
@@ -324,7 +347,7 @@ function createSlackSocketModeLogger(
   return {
     debug: (...args: unknown[]) => {
       if (isSlackSocketDisconnectMessage(args)) {
-        sink.info(prefix(), ...(accountLabel ? [accountLabel] : []), ...args);
+        sink.info(prefix(), ...accountArgs, ...args);
       }
     },
     info: () => {},
@@ -336,11 +359,11 @@ function createSlackSocketModeLogger(
         return;
       }
       remember(args);
-      sink.warn(prefix(), ...args);
+      sink.warn(prefix(), ...accountArgs, ...args);
     },
     error: (...args: unknown[]) => {
       remember(args);
-      sink.error(prefix(), ...args);
+      sink.error(prefix(), ...accountArgs, ...args);
     },
     setLevel: (nextLevel) => {
       level = nextLevel;
@@ -391,6 +414,7 @@ export function createSlackBoltApp(params: {
   dispatcher?: SlackSocketModeReceiverOptions["dispatcher"];
   wrapReceiver?: (receiver: SlackReceiver) => SlackReceiver;
   onContextIdentity?: (identity: SlackContextIdentity) => void | Promise<void>;
+  onSocketReconnected?: (gapMs: number) => void;
   accountId?: string;
 }) {
   const socketModeLogger = createSlackSocketModeLogger(console, params.accountId);
@@ -428,7 +452,7 @@ export function createSlackBoltApp(params: {
       socketModeLogger,
     );
     installSlackNativeReconnectFailureObserver(socketReceiver);
-    installSlackSocketRefreshObserver(socketClient);
+    installSlackSocketConnectionObserver(socketClient, params.onSocketReconnected);
     receiver = socketReceiver;
   } else if (params.slackMode === "http") {
     receiver = new params.interop.HTTPReceiver({

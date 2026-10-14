@@ -316,6 +316,11 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     clientOptions: clientOptions as Record<string, unknown>,
     dispatcher: slackDispatcher,
     wrapReceiver: durableIngress.wrapReceiver,
+    onSocketReconnected: (gapMs) => {
+      runtime.log?.(
+        `slack socket mode reconnected [account ${account.accountId}] after ${gapMs} ms`,
+      );
+    },
     onContextIdentity: async (identity) => {
       const current = monitorContextRef.current;
       if (!current) {

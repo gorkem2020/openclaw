@@ -269,6 +269,44 @@ describe("createSlackBoltApp", () => {
     }
   });
 
+  it("labels Socket Mode warnings and errors with the account", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { socketModeLogger } = createSlackBoltApp({
+        interop: {
+          App: FakeApp as never,
+          HTTPReceiver: FakeHTTPReceiver as never,
+          SocketModeReceiver: FakeSocketModeReceiver as never,
+        },
+        accountId: "acct-one",
+        slackMode: "socket",
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        slackWebhookPath: "/slack/events",
+        clientOptions: {},
+      });
+
+      socketModeLogger.setName("SlackWebSocket:1");
+      socketModeLogger.warn("another socket warning");
+      socketModeLogger.error("WebSocket error occurred: ");
+
+      expect(warn).toHaveBeenCalledWith(
+        "socket-mode:SlackWebSocket:1",
+        "[account acct-one]",
+        "another socket warning",
+      );
+      expect(error).toHaveBeenCalledWith(
+        "socket-mode:SlackWebSocket:1",
+        "[account acct-one]",
+        "WebSocket error occurred: ",
+      );
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   it("applies OpenClaw self-event filtering through installed Bolt middleware", async () => {
     const { app } = createSlackBoltApp({
       interop: {
@@ -481,6 +519,122 @@ describe("createSlackBoltApp", () => {
       void client.delayReconnectAttempt(client.start);
       expect(await startsAfter(14_999)).toBe(0);
       expect(await startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  function createSocketLifecycleApp(onSocketReconnected?: (gapMs: number) => void) {
+    class FakeSocketModeClient extends EventEmitter {
+      clientPingTimeoutMS = 15_000;
+      numOfConsecutiveReconnectionFailures = 0;
+      logger = { debug: () => undefined };
+      shuttingDown = false;
+      send = async () => {};
+      start = vi.fn(async () => {});
+
+      delayReconnectAttempt(callback: (this: FakeSocketModeClient) => Promise<unknown>) {
+        return Promise.resolve(callback.call(this));
+      }
+    }
+    class FakeObservedSocketModeReceiver {
+      args: Record<string, unknown>;
+      client = new FakeSocketModeClient();
+
+      constructor(args: Record<string, unknown>) {
+        this.args = args;
+      }
+    }
+    const { receiver } = createSlackBoltApp({
+      interop: {
+        App: FakeApp as never,
+        HTTPReceiver: FakeHTTPReceiver as never,
+        SocketModeReceiver: FakeObservedSocketModeReceiver as never,
+      },
+      slackMode: "socket",
+      token: "xoxb-test",
+      appToken: "xapp-test",
+      slackWebhookPath: "/slack/events",
+      clientOptions: {},
+      onSocketReconnected,
+    });
+    const client = (receiver as unknown as FakeObservedSocketModeReceiver).client;
+    return {
+      hello: () =>
+        client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 1 }), false),
+      dropWithoutWarning: () => {
+        client.numOfConsecutiveReconnectionFailures = 0;
+        void client.delayReconnectAttempt(client.start);
+      },
+      startsAfter: async (ms: number) => {
+        const before = client.start.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(ms);
+        return client.start.mock.calls.length - before;
+      },
+    };
+  }
+
+  it("reconnects one second after a long-lived socket drops without a disconnect frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the failure backoff for a socket that drops within its first minute", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(59_999);
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs off when the replacement fails before Slack says hello", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(1_000)).toBe(1);
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports how long the socket was down once the replacement says hello", async () => {
+    vi.useFakeTimers();
+    try {
+      const reconnectGaps: number[] = [];
+      const socket = createSocketLifecycleApp((gapMs) => reconnectGaps.push(gapMs));
+      socket.hello();
+      expect(reconnectGaps).toEqual([]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      socket.dropWithoutWarning();
+      await socket.startsAfter(1_000);
+      socket.dropWithoutWarning();
+      await socket.startsAfter(15_000);
+      await vi.advanceTimersByTimeAsync(400);
+      socket.hello();
+      expect(reconnectGaps).toEqual([16_400]);
+      socket.hello();
+      expect(reconnectGaps).toEqual([16_400]);
     } finally {
       vi.useRealTimers();
     }
