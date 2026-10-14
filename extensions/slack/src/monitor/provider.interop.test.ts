@@ -405,6 +405,87 @@ describe("createSlackBoltApp", () => {
     ]);
   });
 
+  it("reconnects one second after a Slack-requested refresh and backs off for failures", async () => {
+    vi.useFakeTimers();
+    try {
+      class FakeSocketModeClient extends EventEmitter {
+        clientPingTimeoutMS = 15_000;
+        numOfConsecutiveReconnectionFailures = 0;
+        logger = { debug: () => undefined };
+        shuttingDown = false;
+        send = async () => {};
+        start = vi.fn(async () => {});
+
+        delayReconnectAttempt(callback: (this: FakeSocketModeClient) => Promise<unknown>) {
+          return Promise.resolve(callback.call(this));
+        }
+      }
+      class FakeObservedSocketModeReceiver {
+        args: Record<string, unknown>;
+        client = new FakeSocketModeClient();
+
+        constructor(args: Record<string, unknown>) {
+          this.args = args;
+        }
+      }
+      const { receiver } = createSlackBoltApp({
+        interop: {
+          App: FakeApp as never,
+          HTTPReceiver: FakeHTTPReceiver as never,
+          SocketModeReceiver: FakeObservedSocketModeReceiver as never,
+        },
+        slackMode: "socket",
+        token: "xoxb-test",
+        appToken: "xapp-test",
+        slackWebhookPath: "/slack/events",
+        clientOptions: {},
+      });
+      const client = (receiver as unknown as FakeObservedSocketModeReceiver).client;
+      const startsAfter = async (ms: number) => {
+        const before = client.start.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(ms);
+        return client.start.mock.calls.length - before;
+      };
+
+      client.emit(
+        "ws_message",
+        JSON.stringify({ type: "disconnect", reason: "warning", debug_info: { host: "h" } }),
+        false,
+      );
+      void client.delayReconnectAttempt(client.start);
+      expect(await startsAfter(999)).toBe(0);
+      expect(await startsAfter(1)).toBe(1);
+
+      client.numOfConsecutiveReconnectionFailures = 0;
+      void client.delayReconnectAttempt(client.start);
+      expect(await startsAfter(14_999)).toBe(0);
+      expect(await startsAfter(1)).toBe(1);
+
+      client.numOfConsecutiveReconnectionFailures = 0;
+      client.emit(
+        "ws_message",
+        JSON.stringify({ type: "disconnect", reason: "too_many_websockets" }),
+        false,
+      );
+      void client.delayReconnectAttempt(client.start);
+      expect(await startsAfter(14_999)).toBe(0);
+      expect(await startsAfter(1)).toBe(1);
+
+      client.numOfConsecutiveReconnectionFailures = 0;
+      client.emit(
+        "ws_message",
+        JSON.stringify({ type: "disconnect", reason: "refresh_requested" }),
+        false,
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      void client.delayReconnectAttempt(client.start);
+      expect(await startsAfter(14_999)).toBe(0);
+      expect(await startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("cancels a pending native reconnect when the app is stopped and started again", async () => {
     vi.useFakeTimers();
     try {
