@@ -1,3 +1,4 @@
+import { warn } from "openclaw/plugin-sdk/runtime-env";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { formatSlackError } from "../errors.js";
 
@@ -50,7 +51,7 @@ function resolveSlackSocketModeConnectionCount(message: unknown): number | undef
   return typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
 }
 
-export function formatSlackSocketModeSharedConnectionWarning(activeConnections: number): string {
+function formatSlackSocketModeSharedConnectionWarning(activeConnections: number): string {
   return [
     `slack socket mode reports ${activeConnections} active connections for this Slack app`,
     "Slack may deliver each event to any one connection",
@@ -61,20 +62,32 @@ export function formatSlackSocketModeSharedConnectionWarning(activeConnections: 
 
 export function registerSlackSocketModeConnectionDiagnostics(params: {
   client: EmitterLike;
-  onSharedConnection: (activeConnections: number) => void;
+  accountId: string;
+  log?: (message: string) => void;
 }): () => void {
   const emitter = params.client;
   let hasWarned = false;
   const listener = (message: unknown, isBinary?: unknown) => {
-    if (isBinary === true || hasWarned) {
+    if (isBinary === true) {
       return;
     }
     const activeConnections = resolveSlackSocketModeConnectionCount(message);
     if (activeConnections === undefined || activeConnections <= 1) {
       return;
     }
+    if (hasWarned) {
+      // Slack keeps counting connections that are gone, so later hellos stay visible too.
+      params.log?.(
+        `[${params.accountId}] slack socket mode reconnected; Slack reports ${activeConnections} active connections for this Slack app`,
+      );
+      return;
+    }
     hasWarned = true;
-    params.onSharedConnection(activeConnections);
+    params.log?.(
+      warn(
+        `[${params.accountId}] ${formatSlackSocketModeSharedConnectionWarning(activeConnections)}`,
+      ),
+    );
   };
   emitter.on("ws_message", listener);
   return () => {

@@ -9,7 +9,6 @@ import {
   startSlackSocketAndWaitForDisconnect,
 } from "./provider-support.js";
 import {
-  formatSlackSocketModeSharedConnectionWarning,
   isNonRecoverableSlackAuthError,
   registerSlackSocketModeConnectionDiagnostics,
 } from "./reconnect-policy.js";
@@ -126,6 +125,7 @@ describe("createSlackBoltApp", () => {
       const { receiver, socketModeLogger } = createSlackBoltApp({
         ...socketOptions,
         interop: fakeInterop,
+        accountId: "acct-one",
       });
       const receiverLogger = (receiver as unknown as FakeSocketModeReceiver).args.logger;
       expect(receiverLogger).toBe(socketModeLogger);
@@ -148,14 +148,53 @@ describe("createSlackBoltApp", () => {
       });
 
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith("socket-mode:SlackWebSocket:1", "another socket warning");
+      expect(warn).toHaveBeenCalledWith(
+        "[acct-one]",
+        "socket-mode:SlackWebSocket:1",
+        "another socket warning",
+      );
       expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(
+        "[acct-one]",
+        "socket-mode:SlackWebSocket:1",
+        "failed to retrieve WSS URL",
+        expect.anything(),
+      );
       expect(socketModeLogger.getLastMessage()).toBe(
         "socket-mode:SlackWebSocket:1 failed to retrieve WSS URL slack error: missing_scope; needed: connections:write",
       );
     } finally {
       warn.mockRestore();
       error.mockRestore();
+    }
+  });
+
+  it("reports Slack disconnect requests at info and keeps other SDK debug output quiet", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+    try {
+      const { socketModeLogger } = createSlackBoltApp({
+        ...socketOptions,
+        interop: fakeInterop,
+        accountId: "acct-one",
+      });
+
+      socketModeLogger.setName("SlackWebSocket:1");
+      socketModeLogger.debug("Sending close frame (status=1000).");
+      socketModeLogger.debug(
+        'Received "disconnect" (refresh_requested) message - disconnecting. Will reconnect.',
+      );
+
+      expect(debug).not.toHaveBeenCalled();
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith(
+        "[acct-one]",
+        "socket-mode:SlackWebSocket:1",
+        'Received "disconnect" (refresh_requested) message - disconnecting. Will reconnect.',
+      );
+    } finally {
+      info.mockRestore();
+      debug.mockRestore();
     }
   });
 
@@ -429,10 +468,11 @@ describe("slack socket reconnect helpers", () => {
 
   it("warns once when Slack reports a shared Socket Mode app token", () => {
     const client = new EventEmitter();
-    const onSharedConnection = vi.fn();
+    const log = vi.fn();
     const unregister = registerSlackSocketModeConnectionDiagnostics({
       client,
-      onSharedConnection,
+      accountId: "acct-one",
+      log,
     });
 
     const emit = (payload: object, binary = false) =>
@@ -442,20 +482,37 @@ describe("slack socket reconnect helpers", () => {
     emit({ type: "hello", num_connections: 1 });
     emit({ type: "hello", num_connections: 4 }, true);
     client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 2 }), false);
-    client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: 3 }), false);
 
-    expect(onSharedConnection).toHaveBeenCalledTimes(1);
-    expect(onSharedConnection).toHaveBeenCalledWith(2);
-    const warning = formatSlackSocketModeSharedConnectionWarning(
-      onSharedConnection.mock.calls[0]?.[0],
-    );
-    expect(warning).toContain("2 active connections");
+    expect(log).toHaveBeenCalledTimes(1);
+    const warning = String(log.mock.calls[0]?.[0]);
+    expect(warning).toContain("[acct-one] slack socket mode reports 2 active connections");
     expect(warning).toContain("equivalent routing and authorization");
 
     unregister();
     emit({ type: "hello", num_connections: 2 });
-    expect(onSharedConnection).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledTimes(1);
     expect(client.listenerCount("ws_message")).toBe(0);
+  });
+
+  it("keeps reporting Slack's connection count on later hellos", () => {
+    const client = new EventEmitter();
+    const log = vi.fn();
+    registerSlackSocketModeConnectionDiagnostics({
+      client,
+      accountId: "acct-one",
+      log,
+    });
+    const hello = (count: number) =>
+      client.emit("ws_message", JSON.stringify({ type: "hello", num_connections: count }), false);
+
+    hello(2);
+    hello(1);
+    hello(9);
+
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenLastCalledWith(
+      "[acct-one] slack socket mode reconnected; Slack reports 9 active connections for this Slack app",
+    );
   });
 
   it("installs the disconnect waiter before socket start completes", async () => {

@@ -34,6 +34,7 @@ const SLACK_SOCKET_LOG_LEVEL_IGNORED_WARNING_RE =
 // every frame from a WebSocket built by another undici copy, such as core's.
 const SLACK_SOCKET_FOREIGN_DIAGNOSTICS_WARNING_RE =
   /^Received unexpected (?:ping|pong) diagnostics message format$/;
+const SLACK_SOCKET_DISCONNECT_MESSAGE_RE = /^Received "disconnect" \(.*\) message/;
 
 export type SlackBoltResolvedExports = {
   App: SlackAppConstructor;
@@ -231,6 +232,13 @@ function isSlackSocketNoiseWarning(args: readonly unknown[]) {
   );
 }
 
+// Slack's disconnect requests (routine refreshes, capacity refusals) explain the reconnects that
+// follow, so they surface at info instead of staying in the SDK's debug output.
+function isSlackSocketDisconnectMessage(args: readonly unknown[]) {
+  const message = args[0];
+  return typeof message === "string" && SLACK_SOCKET_DISCONNECT_MESSAGE_RE.test(message);
+}
+
 function formatSlackSdkLogArgs(args: readonly unknown[]) {
   return args
     .map((arg) => formatSlackError(arg, ""))
@@ -238,10 +246,11 @@ function formatSlackSdkLogArgs(args: readonly unknown[]) {
     .join(" ");
 }
 
-function createSlackSocketModeLogger(): SlackSocketModeLogger {
+function createSlackSocketModeLogger(accountId?: string): SlackSocketModeLogger {
   let level = "info" as SlackSdkLogLevel;
   let name = "socket-mode";
   const prefix = () => `socket-mode:${name}`;
+  const accountArgs = accountId ? [`[${accountId}]`] : [];
   let lastMessage: string | undefined;
   const remember = (args: readonly unknown[]) => {
     const message = formatSlackSdkLogArgs([prefix(), ...args]);
@@ -250,18 +259,22 @@ function createSlackSocketModeLogger(): SlackSocketModeLogger {
     }
   };
   return {
-    debug: () => {},
+    debug: (...args: unknown[]) => {
+      if (isSlackSocketDisconnectMessage(args)) {
+        console.info(...accountArgs, prefix(), ...args);
+      }
+    },
     info: () => {},
     warn: (...args: unknown[]) => {
       if (isSlackSocketNoiseWarning(args)) {
         return;
       }
       remember(args);
-      console.warn(prefix(), ...args);
+      console.warn(...accountArgs, prefix(), ...args);
     },
     error: (...args: unknown[]) => {
       remember(args);
-      console.error(prefix(), ...args);
+      console.error(...accountArgs, prefix(), ...args);
     },
     setLevel: (nextLevel) => {
       level = nextLevel;
@@ -312,6 +325,7 @@ export function createSlackBoltApp(params: {
   dispatcher?: SlackSocketModeReceiverOptions["dispatcher"];
   wrapReceiver?: (receiver: SlackReceiver) => SlackReceiver;
   onContextIdentity?: (identity: SlackContextIdentity) => void | Promise<void>;
+  accountId?: string;
 }): {
   app: InstanceType<SlackAppConstructor>;
   receiver:
@@ -321,7 +335,7 @@ export function createSlackBoltApp(params: {
   socketClient: InstanceType<SlackSocketModeReceiverConstructor>["client"] | undefined;
   socketModeLogger: SlackSocketModeLogger;
 } {
-  const socketModeLogger = createSlackSocketModeLogger();
+  const socketModeLogger = createSlackSocketModeLogger(params.accountId);
   const socketModeReceiverOptions: SlackSocketModeReceiverOptions = {
     appToken: params.appToken ?? "",
     autoReconnectEnabled: true,
