@@ -6,6 +6,7 @@ import {
   createSlackBoltApp,
   gracefulStopSlackApp,
   resolveSlackBoltInterop,
+  retrySlackSocketAfterPurge,
   startSlackSocketAndWaitForDisconnect,
 } from "./provider-support.js";
 
@@ -566,6 +567,7 @@ describe("createSlackBoltApp", () => {
         client.numOfConsecutiveReconnectionFailures = 0;
         void client.delayReconnectAttempt(client.start);
       },
+      purge: (sent: Promise<boolean>) => retrySlackSocketAfterPurge({ receiver }, sent),
       startsAfter: async (ms: number) => {
         const before = client.start.mock.calls.length;
         await vi.advanceTimersByTimeAsync(ms);
@@ -640,7 +642,72 @@ describe("createSlackBoltApp", () => {
     }
   });
 
-  it("cancels a pending native reconnect when the app is stopped and started again", async () => {
+  it("retries two seconds after a purge Slack accepted, for one attempt", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      socket.purge(Promise.resolve(true));
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(1_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the failure backoff when the purge sent no self-event", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      socket.purge(Promise.resolve(false));
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(14_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shortens the backoff when the purge finishes after the socket closed", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      let finishPurge: (sent: boolean) => void = () => undefined;
+      socket.purge(
+        new Promise<boolean>((resolve) => {
+          finishPurge = resolve;
+        }),
+      );
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(5_000)).toBe(0);
+      finishPurge(true);
+      expect(await socket.startsAfter(1_999)).toBe(0);
+      expect(await socket.startsAfter(1)).toBe(1);
+      expect(await socket.startsAfter(20_000)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not postpone a reconnect that is due before the purge retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = createSocketLifecycleApp();
+      socket.hello();
+      await vi.advanceTimersByTimeAsync(60_000);
+      socket.purge(Promise.resolve(true));
+      socket.dropWithoutWarning();
+      expect(await socket.startsAfter(1_000)).toBe(1);
+      expect(await socket.startsAfter(5_000)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending native reconnect and its purge retry when the app restarts", async () => {
     vi.useFakeTimers();
     try {
       const slackBoltModule = await import("@slack/bolt");
@@ -670,10 +737,18 @@ describe("createSlackBoltApp", () => {
       if (typeof delayReconnectAttempt !== "function") {
         throw new Error("expected a native reconnect scheduler");
       }
+      let finishPurge: (sent: boolean) => void = () => undefined;
+      retrySlackSocketAfterPurge(
+        app,
+        new Promise<boolean>((resolve) => {
+          finishPurge = resolve;
+        }),
+      );
 
       void delayReconnectAttempt.call(client, start);
       await gracefulStopSlackApp(app);
       await app.start();
+      finishPurge(true);
       await vi.advanceTimersByTimeAsync(15_000);
 
       expect(start).toHaveBeenCalledTimes(1);

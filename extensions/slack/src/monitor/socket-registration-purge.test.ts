@@ -48,7 +48,7 @@ describe("createSlackSocketRegistrationPurge", () => {
       now: () => now,
     });
 
-    await purge.request("hello", 9);
+    expect(await purge.request("hello", 9)).toBe(true);
     const expected = {
       channel: "D_OWNER",
       timestamp: "1700000100.000100",
@@ -78,7 +78,7 @@ describe("createSlackSocketRegistrationPurge", () => {
       accountId: "default",
     });
 
-    await purge.request("hello", 2);
+    expect(await purge.request("hello", 2)).toBe(true);
 
     expect(client.reactions.remove).toHaveBeenCalledTimes(1);
   });
@@ -93,7 +93,7 @@ describe("createSlackSocketRegistrationPurge", () => {
       log,
     });
 
-    await purge.request("hello", 4);
+    expect(await purge.request("hello", 4)).toBe(false);
 
     expect(client.reactions.add).not.toHaveBeenCalled();
     expect(log.mock.calls[0]?.[0]).toContain("no own direct message");
@@ -110,9 +110,9 @@ describe("createSlackSocketRegistrationPurge", () => {
       now: () => now,
     });
 
-    await purge.request("hello", 3);
+    expect(await purge.request("hello", 3)).toBe(false);
     now += SLACK_SOCKET_PURGE_MIN_INTERVAL_MS;
-    await purge.request("hello", 3);
+    expect(await purge.request("hello", 3)).toBe(true);
     expect(client.conversations.list).toHaveBeenCalledTimes(2);
     expect(client.reactions.remove).toHaveBeenCalledTimes(1);
 

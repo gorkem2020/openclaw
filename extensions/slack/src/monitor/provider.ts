@@ -59,6 +59,7 @@ import {
   publishSlackBlockedStatus,
   publishSlackDisconnectedStatus,
   resolveSlackBoltInterop,
+  retrySlackSocketAfterPurge,
   startSlackSocketAndWaitForDisconnect,
   type SlackBoltResolvedExports,
 } from "./provider-support.js";
@@ -406,7 +407,10 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
             void socketRegistrationPurge?.request("hello", activeConnections);
           },
           onCapacityRefusal: () => {
-            void socketRegistrationPurge?.request("too_many_websockets");
+            const purge = socketRegistrationPurge?.request("too_many_websockets");
+            if (purge) {
+              retrySlackSocketAfterPurge(app, purge);
+            }
           },
         })
       : () => {};

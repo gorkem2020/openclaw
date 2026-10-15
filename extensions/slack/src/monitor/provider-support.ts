@@ -33,6 +33,7 @@ const OPENCLAW_SLACK_NATIVE_RECONNECT_OBSERVER_KEY = "__openclawNativeReconnectF
 const OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY = "__openclawSlackRefreshRequestedAt";
 const OPENCLAW_SLACK_CONNECTED_AT_KEY = "__openclawSlackConnectedAt";
 const OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY = "__openclawSlackConnectionLostAt";
+const OPENCLAW_SLACK_CAPACITY_PURGE_KEY = "__openclawSlackCapacityPurge";
 // Slack refreshes every connection about every five hours and resets some
 // without a disconnect frame; losing a connection that had been up for a while
 // is not a failure, so the replacement skips the failure backoff.
@@ -40,6 +41,9 @@ const SLACK_SOCKET_FAST_RECONNECT_DELAY_MS = 1_000;
 const SLACK_SOCKET_STABLE_CONNECTION_MS = 60_000;
 const SLACK_SOCKET_REFRESH_REQUEST_TTL_MS = 120_000;
 const SLACK_SOCKET_REFRESH_REASONS = new Set(["warning", "refresh_requested"]);
+// Slack drops the registrations it still counts once a purge's self-event
+// reaches them, so the retry after a refused connection skips the backoff.
+const SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS = 2_000;
 const SLACK_SOCKET_PONG_TIMEOUT_WARNING_PREFIX = "A pong wasn't received from the server";
 const SLACK_SOCKET_PING_TIMEOUT_WARNING_PREFIX = "A ping wasn't received from the server";
 const SLACK_SOCKET_LOG_LEVEL_IGNORED_WARNING_RE =
@@ -109,8 +113,10 @@ function installSlackNativeReconnectFailureObserver(receiver: unknown) {
       const now = Date.now();
       const refreshRequestedAt = Number(Reflect.get(this, OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY));
       const connectedAt = Number(Reflect.get(this, OPENCLAW_SLACK_CONNECTED_AT_KEY));
+      const capacityPurge: unknown = Reflect.get(this, OPENCLAW_SLACK_CAPACITY_PURGE_KEY);
       Reflect.set(this, OPENCLAW_SLACK_REFRESH_REQUESTED_AT_KEY, undefined);
       Reflect.set(this, OPENCLAW_SLACK_CONNECTED_AT_KEY, undefined);
+      Reflect.set(this, OPENCLAW_SLACK_CAPACITY_PURGE_KEY, undefined);
       if (!Number.isFinite(Number(Reflect.get(this, OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY)))) {
         Reflect.set(this, OPENCLAW_SLACK_CONNECTION_LOST_AT_KEY, now);
       }
@@ -130,7 +136,7 @@ function installSlackNativeReconnectFailureObserver(receiver: unknown) {
         `Before trying to reconnect, this client will wait for ${delayMs} milliseconds`,
       );
       return new Promise((resolve, reject) => {
-        const reconnectTimer = setTimeout(() => {
+        const reconnect = () => {
           Reflect.set(this, "reconnectionTimer", undefined);
           if (Reflect.get(this, "shuttingDown")) {
             logger?.debug?.("Client shutting down, will not attempt reconnect.");
@@ -147,10 +153,29 @@ function installSlackNativeReconnectFailureObserver(receiver: unknown) {
             }
             reject(toErrorObject(error, "Non-Error rejection"));
           });
-        }, delayMs);
+        };
+        const reconnectDueAt = now + delayMs;
+        const reconnectTimer = setTimeout(reconnect, delayMs);
         // SocketModeClient.disconnect() clears this field. Keep the patched
         // scheduler on the SDK's lifecycle so a stopped app cannot reconnect.
         Reflect.set(this, "reconnectionTimer", reconnectTimer);
+        if (capacityPurge instanceof Promise) {
+          void capacityPurge.then((sent: unknown) => {
+            if (
+              sent !== true ||
+              Reflect.get(this, "reconnectionTimer") !== reconnectTimer ||
+              Date.now() + SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS >= reconnectDueAt
+            ) {
+              return;
+            }
+            clearTimeout(reconnectTimer);
+            Reflect.set(
+              this,
+              "reconnectionTimer",
+              setTimeout(reconnect, SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS),
+            );
+          });
+        }
       });
     },
   );
@@ -561,6 +586,15 @@ function resolveSlackSocketShutdownClient(app: unknown): SlackSocketShutdownClie
     return undefined;
   }
   return client as SlackSocketShutdownClient;
+}
+
+// The next reconnect waits SLACK_SOCKET_POST_PURGE_RECONNECT_DELAY_MS after the
+// purge instead of the failure backoff when the purge sent its self-event.
+export function retrySlackSocketAfterPurge(app: unknown, sent: Promise<boolean>) {
+  const client = resolveSlackSocketShutdownClient(app);
+  if (client) {
+    Reflect.set(client, OPENCLAW_SLACK_CAPACITY_PURGE_KEY, sent);
+  }
 }
 
 export async function gracefulStopSlackApp(app: { stop: () => unknown }) {

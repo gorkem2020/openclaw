@@ -86,14 +86,17 @@ export function createSlackSocketRegistrationPurge(params: {
     await params.client.reactions.remove(args);
   };
 
-  const purge = async (reason: SlackSocketRegistrationPurgeReason, activeConnections?: number) => {
+  const purge = async (
+    reason: SlackSocketRegistrationPurgeReason,
+    activeConnections?: number,
+  ): Promise<boolean> => {
     try {
       target ??= await findTarget();
       if (!target) {
         params.log?.(
           `${label}: no own direct message to react to, cannot clear Slack's dead registrations`,
         );
-        return;
+        return false;
       }
       await sendSelfEvent(target);
       params.log?.(
@@ -101,6 +104,7 @@ export function createSlackSocketRegistrationPurge(params: {
           ? `${label}: Slack counts ${activeConnections} connections for this app while this gateway holds one; sent a self-event so Slack drops the dead registrations`
           : `${label}: Slack refused a new connection (too_many_websockets); sent a self-event so Slack drops the dead registrations`,
       );
+      return true;
     } catch (error) {
       target = undefined;
       const detail = formatUnknownError(error);
@@ -108,6 +112,7 @@ export function createSlackSocketRegistrationPurge(params: {
         disabled = true;
       }
       params.log?.(`${label}: could not clear Slack's dead registrations: ${detail}`);
+      return false;
     }
   };
 
